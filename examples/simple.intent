@@ -1,0 +1,25 @@
+# Example Intent File
+# A simple user management system
+
+entity User:
+    id: string @primary
+    name: string
+    email: string @unique
+    age: number
+    status: active | inactive
+
+action create_user:
+    name: string
+    email: string
+    age: number
+    @api POST /users
+    @returns User
+
+action get_user:
+    id: string
+    @api GET /users/{id}
+    @returns User
+
+rule ValidateAge:
+    when User.age < 18
+    then reject("User must be 18 or older")

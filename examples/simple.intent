@@ -6,12 +6,14 @@ entity User:
     name: string
     email: string @unique
     age: number
+    phone_number: string
     status: active | inactive
 
 action create_user:
     name: string
     email: string
     age: number
+    phone_number: string
     @api POST /users
     @returns User
 
@@ -19,6 +21,20 @@ action get_user:
     id: string
     @api GET /users/{id}
     @returns User
+
+action update_user:
+    id: string
+    name: string
+    email: string
+    age: number
+    phone_number: string
+    status: string
+    @api PUT /users/{id}
+    @returns User
+
+action delete_user:
+    id: string
+    @api DELETE /users/{id}
 
 rule ValidateAge:
     when User.age < 18

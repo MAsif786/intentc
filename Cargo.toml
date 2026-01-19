@@ -1,0 +1,47 @@
+[package]
+name = "intentc"
+version = "0.1.0"
+edition = "2024"
+description = "Intent Compiler - Transform IDL into production-ready backend code"
+authors = ["Muhammad Asif"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/MAsif786/intentc"
+keywords = ["compiler", "codegen", "dsl", "intent"]
+categories = ["development-tools", "compilers"]
+
+[dependencies]
+# Parser
+pest = "2.7"
+pest_derive = "2.7"
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Template engine for code generation
+tera = "1.20"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Terminal colors for error output
+colored = "3.0"
+
+# File system utilities
+walkdir = "2.5"
+
+# Date/time handling
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3.15"
+pretty_assertions = "1.4"
+
+[[bin]]
+name = "intentc"
+path = "src/main.rs"

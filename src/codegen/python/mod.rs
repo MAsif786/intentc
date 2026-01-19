@@ -127,7 +127,18 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import argparse
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(description="Run the Intent Compiler Generated API")
+    parser.add_argument("--host", default=os.getenv("HOST", "0.0.0.0"), help="Host to bind to")
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", 8000)), help="Port to bind to")
+    args = parser.parse_args()
+
+    uvicorn.run(app, host=args.host, port=args.port)
 "#);
 
         let path = output_dir.join("main.py");

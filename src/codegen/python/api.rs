@@ -19,7 +19,8 @@ pub fn generate_routes(ast: &IntentFile, output_dir: &Path) -> CompileResult<Gen
     content.push_str("import uuid\n");
     content.push_str("from typing import List, Optional\n\n");
     content.push_str("from fastapi import APIRouter, Depends, HTTPException, status\n");
-    content.push_str("from sqlalchemy.orm import Session\n\n");
+    content.push_str("from sqlalchemy.orm import Session\n");
+    content.push_str("from sqlalchemy.exc import IntegrityError\n\n");
     content.push_str("from db.database import get_db\n");
     content.push_str("from db.models import *\n");
     content.push_str("from models import *\n");
@@ -186,9 +187,13 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
                     model_name
                 ));
                 content.push_str("    db.add(db_obj)\n");
-                content.push_str("    db.commit()\n");
-                content.push_str("    db.refresh(db_obj)\n");
-                content.push_str("    return db_obj\n");
+                content.push_str("    try:\n");
+                content.push_str("        db.commit()\n");
+                content.push_str("        db.refresh(db_obj)\n");
+                content.push_str("        return db_obj\n");
+                content.push_str("    except IntegrityError as e:\n");
+                content.push_str("        db.rollback()\n");
+                content.push_str("        raise HTTPException(status_code=400, detail=str(e.orig))\n");
             } else {
                 content.push_str("    return {\"message\": \"Created\"}\n");
             }
@@ -206,16 +211,36 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
                 content.push_str("    update_data = data.model_dump(exclude_unset=True)\n");
                 content.push_str("    for field, value in update_data.items():\n");
                 content.push_str("        setattr(db_obj, field, value)\n");
-                content.push_str("    db.commit()\n");
-                content.push_str("    db.refresh(db_obj)\n");
-                content.push_str("    return db_obj\n");
+                content.push_str("    try:\n");
+                content.push_str("        db.commit()\n");
+                content.push_str("        db.refresh(db_obj)\n");
+                content.push_str("        return db_obj\n");
+                content.push_str("    except IntegrityError as e:\n");
+                content.push_str("        db.rollback()\n");
+                content.push_str("        raise HTTPException(status_code=400, detail=str(e.orig))\n");
             } else {
                 content.push_str("    return {\"message\": \"Updated\"}\n");
             }
         }
         HttpMethod::Delete => {
-            if let Some(return_type) = &returns {
-                let model_name = format!("{}Model", return_type);
+            // Get entity name from returns or infer from path
+            let entity_name = returns.clone().or_else(|| {
+                // Infer from path like /users/{id} -> User
+                path.split('/')
+                    .find(|s| !s.is_empty() && !s.starts_with('{'))
+                    .map(|s| {
+                        // users -> User (remove 's' and capitalize)
+                        let singular = s.trim_end_matches('s');
+                        let mut chars = singular.chars();
+                        match chars.next() {
+                            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                            None => s.to_string(),
+                        }
+                    })
+            });
+
+            if let Some(entity) = entity_name {
+                let model_name = format!("{}Model", entity);
                 let id_param = path.split('/').find(|s| s.starts_with('{')).map(|s| &s[1..s.len()-1]).unwrap_or("id");
                 content.push_str(&format!(
                     "    db_obj = db.query({}).filter({}.id == {}).first()\n",
@@ -225,7 +250,7 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
                 content.push_str("        raise HTTPException(status_code=404, detail=\"Not found\")\n");
                 content.push_str("    db.delete(db_obj)\n");
                 content.push_str("    db.commit()\n");
-                content.push_str("    return {\"message\": \"Deleted\"}\n");
+                content.push_str("    return {\"message\": \"Deleted\", \"id\": id}\n");
             } else {
                 content.push_str("    return {\"message\": \"Deleted\"}\n");
             }

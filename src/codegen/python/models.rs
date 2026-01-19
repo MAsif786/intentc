@@ -56,6 +56,7 @@ fn generate_entity_model(entity: &Entity) -> CompileResult<(String, usize)> {
 
     // Base model (for creation)
     content.push_str(&format!("class {}Base(BaseModel):\n", entity.name));
+    content.push_str("    model_config = {\"extra\": \"forbid\"}\n");
     content.push_str("    \"\"\"Base model with common fields\"\"\"\n");
     
     let mut has_fields = false;
@@ -80,6 +81,7 @@ fn generate_entity_model(entity: &Entity) -> CompileResult<(String, usize)> {
 
     // Update model (all fields optional)
     content.push_str(&format!("class {}Update(BaseModel):\n", entity.name));
+    content.push_str("    model_config = {\"extra\": \"forbid\"}\n");
     content.push_str("    \"\"\"Model for updating records (all fields optional)\"\"\"\n");
     
     let mut has_update_fields = false;
@@ -107,8 +109,10 @@ fn generate_entity_model(entity: &Entity) -> CompileResult<(String, usize)> {
         }
     }
     content.push_str("\n");
-    content.push_str("    class Config:\n");
-    content.push_str("        from_attributes = True\n");
+    content.push_str("    model_config = {\n");
+    content.push_str("        \"from_attributes\": True,\n");
+    content.push_str("        \"extra\": \"forbid\"\n");
+    content.push_str("    }\n");
 
     let lines = content.lines().count();
     Ok((content, lines))

@@ -1,0 +1,147 @@
+// Intent Definition Language Grammar (PEG)
+// Parser grammar for .intent files
+
+// We DON'T use pest's implicit whitespace handling
+// because we need explicit indentation matching
+COMMENT = _{ "#" ~ (!"\n" ~ ANY)* }
+
+// Explicit whitespace tokens
+sp = _{ " " }
+ws = _{ " " | "\t" }
+nl = { "\n" | "\r\n" }
+indent = _{ "    " | "\t" }
+
+// Entry point
+intent_file = { SOI ~ (nl | definition)* ~ EOI }
+
+// Top-level definitions
+definition = { entity_def | action_def | rule_def }
+
+// ============================================
+// Entity Definition 
+// ============================================
+entity_def = {
+    "entity" ~ ws+ ~ entity_name ~ ":" ~ nl ~
+    entity_fields
+}
+
+entity_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+entity_fields = { entity_field* }
+
+entity_field = { indent ~ field_def ~ nl }
+
+field_def = {
+    field_name ~ ":" ~ ws* ~ field_type ~ (ws+ ~ decorator)*
+}
+
+field_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+field_type = { array_type | optional_type | base_type }
+
+base_type = { enum_type | primitive_type | reference_type }
+
+primitive_type = @{ "string" | "number" | "boolean" | "datetime" }
+
+enum_type = { enum_value ~ (ws* ~ "|" ~ ws* ~ enum_value)+ }
+
+enum_value = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+reference_type = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+array_type = { "[" ~ ws* ~ base_type ~ ws* ~ "]" }
+
+optional_type = { base_type ~ "?" }
+
+// ============================================
+// Action Definition
+// ============================================
+action_def = {
+    "action" ~ ws+ ~ action_name ~ ":" ~ nl ~
+    action_lines
+}
+
+action_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+action_lines = { action_line* }
+
+action_line = { indent ~ (action_param | decorator) ~ nl }
+
+action_param = {
+    param_name ~ ":" ~ ws* ~ field_type
+}
+
+param_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// ============================================
+// Rule Definition
+// ============================================
+rule_def = {
+    "rule" ~ ws+ ~ rule_name ~ ":" ~ nl ~
+    indent ~ when_clause ~ nl ~
+    indent ~ then_clause ~ nl?
+}
+
+rule_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+when_clause = { "when" ~ ws+ ~ expression }
+then_clause = { "then" ~ ws+ ~ consequence }
+
+// ============================================
+// Decorators
+// ============================================
+decorator = { "@" ~ decorator_type }
+
+decorator_type = {
+    api_decorator | returns_decorator | default_decorator | simple_decorator
+}
+
+simple_decorator = @{ "primary" | "unique" | "optional" | "auth" | "index" }
+
+api_decorator = { "api" ~ ws+ ~ http_method ~ ws+ ~ api_path }
+http_method = @{ "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }
+api_path = @{ "/" ~ (ASCII_ALPHANUMERIC | "/" | "_" | "-" | "{" | "}")* }
+
+returns_decorator = { "returns" ~ ws+ ~ type_name }
+type_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+default_decorator = { "default" ~ "(" ~ ws* ~ default_value ~ ws* ~ ")" }
+default_value = { identifier | string_literal | number_literal }
+
+// ============================================
+// Expressions
+// ============================================
+expression = { or_expr }
+
+or_expr = { and_expr ~ (ws+ ~ "or" ~ ws+ ~ and_expr)* }
+and_expr = { not_expr ~ (ws+ ~ "and" ~ ws+ ~ not_expr)* }
+not_expr = { ("not" ~ ws+)? ~ comparison }
+comparison = { primary ~ (ws* ~ comp_op ~ ws* ~ primary)? }
+
+comp_op = @{ "==" | "!=" | ">=" | "<=" | ">" | "<" }
+
+primary = { paren_expr | field_access | literal | identifier }
+
+paren_expr = { "(" ~ ws* ~ expression ~ ws* ~ ")" }
+
+field_access = { entity_ref ~ "." ~ field_ref }
+entity_ref = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+field_ref = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+literal = { string_literal | number_literal | boolean_literal }
+string_literal = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+number_literal = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+boolean_literal = @{ "true" | "false" }
+
+identifier = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// ============================================
+// Consequences
+// ============================================
+consequence = { reject_call | log_call | action_call }
+
+reject_call = { "reject" ~ "(" ~ ws* ~ string_literal ~ ws* ~ ")" }
+log_call = { "log" ~ "(" ~ ws* ~ string_literal ~ ws* ~ ")" }
+action_call = { identifier ~ "(" ~ ws* ~ call_args? ~ ws* ~ ")" }
+call_args = { call_arg ~ (ws* ~ "," ~ ws* ~ call_arg)* }
+call_arg = { expression }

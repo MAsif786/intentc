@@ -8,6 +8,7 @@ mod rules;
 mod migrations;
 mod tests;
 mod policies;
+mod repositories;
 
 use std::fs;
 use std::path::Path;
@@ -39,6 +40,7 @@ impl PythonGenerator {
             "api",
             "core",
             "logic",
+            "repositories",
             "tests",
         ];
 
@@ -263,6 +265,10 @@ impl CodeGenerator for PythonGenerator {
         // Generate SQLAlchemy ORM models
         let orm_result = orm::generate_orm_models(ast, output_dir)?;
         result.merge(orm_result);
+
+        // Generate repositories
+        let repos_result = repositories::generate_repositories(ast, output_dir)?;
+        result.merge(repos_result);
 
         // Generate FastAPI routes
         let api_result = api::generate_routes(ast, output_dir)?;

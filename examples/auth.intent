@@ -1,0 +1,39 @@
+# Auth Test Intent File
+# Demonstrates protected routes
+
+entity User:
+    id: string @primary
+    email: string @unique
+    hashed_password: string
+
+entity Secret:
+    id: string @primary
+    content: string
+    owner_id: string
+
+action get_secrets:
+    @api GET /secrets
+    @returns Secret
+    @auth
+
+action create_secret:
+    content: string
+    @api POST /secrets
+    @returns Secret
+    @auth
+
+action public_info:
+    @api GET /info
+
+
+action signup:
+    email: string
+    password: string @map(hashed_password) @hash
+    @api POST /signup
+    @returns User
+
+action login:
+    email: string
+    password: string
+    @api POST /login
+    @returns User

@@ -1,7 +1,7 @@
 // Intent Compiler - Python Controller Generator
 // Generates controller classes for route handling
 
-use crate::ast::{Action, Decorator, HttpMethod, IntentFile};
+use crate::ast::{Action, Decorator, IntentFile};
 use crate::codegen::GenerationResult;
 use crate::error::CompileResult;
 use std::fs;

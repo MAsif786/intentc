@@ -44,6 +44,10 @@ fn main() -> ExitCode {
 
 /// Compile an intent file to target language
 fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bool) -> CompileResult<()> {
+    use std::time::Instant;
+    
+    let total_start = Instant::now();
+    
     if verbose {
         println!("{} {} → {}", "Compiling".green().bold(), input.display(), output.display());
     }
@@ -52,25 +56,30 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
     let source = fs::read_to_string(input)?;
 
     // Parse
+    let parse_start = Instant::now();
     if verbose {
         println!("  {} Parsing...", "→".blue());
     }
     let ast = parser::parse_intent(&source)?;
+    let parse_time = parse_start.elapsed();
 
     if verbose {
-        println!("    {} {} entities, {} actions, {} rules", 
+        println!("    {} {} entities, {} actions, {} rules ({}ms)", 
             "✓".green(),
             ast.entities.len(),
             ast.actions.len(),
-            ast.rules.len()
+            ast.rules.len(),
+            parse_time.as_millis()
         );
     }
 
     // Validate
+    let validate_start = Instant::now();
     if verbose {
         println!("  {} Validating...", "→".blue());
     }
     let ctx = validator::validate(&ast)?;
+    let validate_time = validate_start.elapsed();
 
     // Print warnings
     for warning in &ctx.warnings {
@@ -78,7 +87,7 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
     }
 
     if verbose {
-        println!("    {} Validation passed", "✓".green());
+        println!("    {} Validation passed ({}ms)", "✓".green(), validate_time.as_millis());
     }
 
     // Parse target language (defaults to python)
@@ -86,6 +95,7 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
         .map_err(|e| error::CompileError::codegen(e))?;
 
     // Generate code
+    let generate_start = Instant::now();
     if verbose {
         println!("  {} Generating {} code...", "→".blue(), target_lang);
     }
@@ -95,12 +105,14 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
 
     let generator = create_generator(target_lang);
     let result = generator.generate(&ast, output)?;
+    let generate_time = generate_start.elapsed();
 
     if verbose {
-        println!("    {} Generated {} files ({} lines)", 
+        println!("    {} Generated {} files ({} lines) in {}ms", 
             "✓".green(),
             result.files_created.len(),
-            result.lines_generated
+            result.lines_generated,
+            generate_time.as_millis()
         );
         
         for file in &result.files_created {
@@ -113,8 +125,10 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
         eprintln!("{}: {}", "warning".yellow().bold(), warning);
     }
 
+    let total_time = total_start.elapsed();
     println!("{} Compilation complete!", "✓".green().bold());
     println!("  Output: {}", output.display());
+    println!("  Build time: {}ms", total_time.as_millis());
 
     Ok(())
 }

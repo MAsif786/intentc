@@ -87,7 +87,7 @@ fn generate_entity_service(entity: &crate::ast::Entity, ast: &IntentFile) -> Str
     content
 }
 
-fn generate_crud_methods(name: &str, name_lower: &str) -> String {
+fn generate_crud_methods(name: &str, _name_lower: &str) -> String {
     let mut content = String::new();
     
     // Get all
@@ -118,7 +118,7 @@ fn generate_crud_methods(name: &str, name_lower: &str) -> String {
     content
 }
 
-fn generate_action_method(action: &Action, entity_name: &str, entity_lower: &str) -> String {
+fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &str) -> String {
     let mut content = String::new();
     let action_name = &action.name;
     

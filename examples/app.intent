@@ -1,0 +1,107 @@
+policy AdminOnly:
+    subject: User
+    require User.role == "admin"
+
+entity User:
+    id: uuid @primary @default(uuid)
+    email: email @unique @index
+    password_hash: string
+    role: string @default("user")
+    full_name: string
+    created_at: datetime @default(now)
+
+entity Product:
+    id: uuid @primary @default(uuid)
+    name: string @index
+    description: string
+    price: number @validate(min: 0)
+    stock: number @validate(min: 0)
+    category: string @default("uncategorized")
+    status: string @default("active")
+
+    policy InStock:
+        subject: User
+        require Product.stock > 0
+
+entity Order:
+    id: uuid @primary @default(uuid)
+    user_id: uuid
+    total: number
+    status: string @default("pending")
+    created_at: datetime @default(now)
+
+    policy OwnsOrder:
+        subject: User
+        require Order.user_id == User.id
+
+entity Review:
+    id: uuid @primary @default(uuid)
+    product_id: uuid
+    user_id: uuid
+    rating: number @validate(min: 1, max: 5)
+    comment: string
+
+# Auth Actions
+@api POST /signup
+action signup:
+    input:
+        email: email
+        password: string @map(password_hash, hash)
+        full_name: string
+    output: User(id, email, role)
+
+@api POST /login
+action login:
+    input:
+        email: email
+        password: string
+    process:
+        derive user = find(User, email)
+        derive valid = verify_hash(password, user.password_hash)
+        derive token = create_jwt(user.email)
+    output: User(id, token)
+
+# Product Actions
+@api POST /products
+@auth
+@policy(AdminOnly)
+action create_product:
+    input:
+        name: string
+        description: string
+        price: number
+        stock: number
+        category: string?
+    output: Product(id, name)
+
+@api GET /products
+@auth
+action list_products:
+    output: Product(id, name, price, category, stock)
+
+@api GET /products/{id}
+action get_product:
+    input:
+        id: uuid
+    output: Product(id, name, description, price, stock)
+
+# Order Actions
+@api POST /orders
+@auth
+action create_order:
+    input:
+        total: number
+    output: Order(id, status, total)
+
+@api GET /orders/{id}
+@auth
+@policy(Order.OwnsOrder)
+action get_order:
+    input:
+        id: uuid
+    output: Order(id, total, status, created_at)
+
+# Rules
+rule LogHighValueOrder:
+    when Order.total > 1000
+    then log("High value order created")

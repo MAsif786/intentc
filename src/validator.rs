@@ -10,6 +10,7 @@ use crate::error::{CompileError, CompileResult, Warning};
 pub struct ValidationContext {
     pub entities: HashMap<String, Entity>,
     pub actions: HashMap<String, Action>,
+    pub policies: HashMap<String, Policy>,
     pub warnings: Vec<Warning>,
 }
 
@@ -18,6 +19,7 @@ impl ValidationContext {
         Self {
             entities: HashMap::new(),
             actions: HashMap::new(),
+            policies: HashMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -58,6 +60,33 @@ pub fn validate(file: &IntentFile) -> CompileResult<ValidationContext> {
             ));
         } else {
             ctx.actions.insert(action.name.clone(), action.clone());
+        }
+    }
+
+
+    // Collect policies (global and entity-scoped)
+    for policy in &file.policies {
+        if ctx.policies.contains_key(&policy.name) {
+             errors.push(CompileError::validation(
+                format!("Duplicate policy name: {}", policy.name),
+                policy.location.clone(),
+            ));
+        } else {
+            ctx.policies.insert(policy.name.clone(), policy.clone());
+        }
+    }
+
+    for entity in &file.entities {
+        for policy in &entity.policies {
+            let full_name = format!("{}.{}", entity.name, policy.name);
+            if ctx.policies.contains_key(&full_name) {
+                 errors.push(CompileError::validation(
+                    format!("Duplicate policy name: {}", full_name),
+                    policy.location.clone(),
+                ));
+            } else {
+                ctx.policies.insert(full_name, policy.clone());
+            }
         }
     }
 
@@ -141,7 +170,7 @@ fn validate_field_type(
     location: &SourceLocation,
 ) -> CompileResult<()> {
     match field_type {
-        FieldType::Reference(name) => {
+        FieldType::Reference(name) | FieldType::Ref(name) => {
             if !ctx.entities.contains_key(name) {
                 return Err(CompileError::validation_with_hint(
                     format!("Unknown entity reference: {}", name),
@@ -150,7 +179,7 @@ fn validate_field_type(
                 ));
             }
         }
-        FieldType::Array(inner) => {
+        FieldType::Array(inner) | FieldType::List(inner) => {
             validate_field_type(inner, ctx, location)?;
         }
         FieldType::Optional(inner) => {
@@ -204,17 +233,30 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
     let mut has_api = false;
     let mut param_names = HashSet::new();
 
-    // Validate parameters
-    for param in &action.params {
-        if param_names.contains(&param.name) {
-            return Err(CompileError::validation(
-                format!("Duplicate parameter '{}' in action '{}'", param.name, action.name),
-                param.location.clone(),
+    // Validate input fields (v0.1 structured syntax)
+    if let Some(input) = &action.input {
+        for param in &input.fields {
+            if param_names.contains(&param.name) {
+                return Err(CompileError::validation(
+                    format!("Duplicate parameter '{}' in action '{}'", param.name, action.name),
+                    param.location.clone(),
+                ));
+            }
+            param_names.insert(&param.name);
+
+            validate_field_type(&param.param_type, ctx, &param.location)?;
+        }
+    }
+
+    // Validate output section (v0.1)
+    if let Some(output) = &action.output {
+        if !ctx.entities.contains_key(&output.entity) {
+            return Err(CompileError::validation_with_hint(
+                format!("Unknown output type: {}", output.entity),
+                action.location.clone(),
+                "Output type must be a defined entity",
             ));
         }
-        param_names.insert(&param.name);
-
-        validate_field_type(&param.param_type, ctx, &param.location)?;
     }
 
     // Validate decorators
@@ -224,12 +266,46 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
                 has_api = true;
                 validate_api_path(path, &param_names, &action.location)?;
             }
-            Decorator::Returns(type_name) => {
-                if !ctx.entities.contains_key(type_name) {
-                    return Err(CompileError::validation_with_hint(
-                        format!("Unknown return type: {}", type_name),
+            Decorator::Auth { name, args } => {
+                if let Some(name) = name {
+                    let first_char = name.chars().next().unwrap_or(' ');
+                    if first_char.is_uppercase() {
+                        if !ctx.entities.contains_key(name) {
+                            return Err(CompileError::validation_with_hint(
+                                format!("Unknown entity in @auth: {}", name),
+                                action.location.clone(),
+                                format!("Available entities: {:?}", ctx.entities.keys().collect::<Vec<_>>()),
+                            ));
+                        }
+                    } else {
+                        if !ctx.actions.contains_key(name) {
+                            return Err(CompileError::validation_with_hint(
+                                format!("Unknown action in @auth: {}", name),
+                                action.location.clone(),
+                                format!("Available actions: {:?}", ctx.actions.keys().collect::<Vec<_>>()),
+                            ));
+                        }
+                    }
+
+                    // Validate arguments
+                    for arg in args {
+                        if !param_names.contains(arg) {
+                            return Err(CompileError::validation_with_hint(
+                                format!("Unknown argument '{}' in @auth", arg),
+                                action.location.clone(),
+                                format!("Available parameters: {:?}", param_names.iter().collect::<Vec<_>>()),
+                            ));
+                        }
+                    }
+                }
+            }
+            Decorator::Policy(name) => {
+                // Check if policy exists
+                if !ctx.policies.contains_key(name) {
+                     return Err(CompileError::validation_with_hint(
+                        format!("Unknown policy: {}", name),
                         action.location.clone(),
-                        "Return type must be a defined entity",
+                        format!("Available policies: {:?}", ctx.policies.keys().collect::<Vec<_>>()),
                     ));
                 }
             }
@@ -238,11 +314,8 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
     }
 
     if !has_api {
-        return Err(CompileError::validation_with_hint(
-            format!("Action '{}' has no @api decorator", action.name),
-            action.location.clone(),
-            "Add @api METHOD /path to define the endpoint",
-        ));
+        // Actions without @api are internal and don't generate routes
+        // For v0.1 we just allow them
     }
 
     Ok(())
@@ -400,13 +473,36 @@ entity User:
     id: string @primary
     name: string
 
+@api POST /users
 action create_user:
-    name: string
-    @api POST /users
-    @returns User
+    input:
+        name: string
+    output: User(id, name)
 "#;
         let file = parse_intent(source).unwrap();
         let result = validate(&file);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_auth_unknown_entity() {
+        let source = r#"
+entity User:
+    id: string @primary
+
+@api GET /private
+@auth(UnknownUser)
+action private_action:
+    output: User(id)
+"#;
+        let file = parse_intent(source).unwrap();
+        let result = validate(&file);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            CompileError::ValidationError { message, .. } => {
+                assert!(message.contains("Unknown entity in @auth"));
+            }
+            _ => panic!("Expected validation error"),
+        }
     }
 }

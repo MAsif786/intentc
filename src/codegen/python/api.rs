@@ -24,7 +24,8 @@ pub fn generate_routes(ast: &IntentFile, output_dir: &Path) -> CompileResult<Gen
     content.push_str("from db.database import get_db\n");
     content.push_str("from db.models import *\n");
     content.push_str("from models import *\n");
-    content.push_str("from logic.rules import *\n\n\n");
+    content.push_str("from logic.rules import *\n");
+    content.push_str("from core.security import get_current_user_token, get_password_hash\n\n\n");
     
     content.push_str("router = APIRouter()\n\n\n");
 
@@ -75,7 +76,7 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
     });
 
     // Determine if auth is required
-    let _requires_auth = action.decorators.contains(&Decorator::Auth);
+    let requires_auth = action.decorators.contains(&Decorator::Auth);
 
     // Generate decorator
     let method_str = match method {
@@ -86,7 +87,13 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
         HttpMethod::Delete => "delete",
     };
 
-    let response_model = returns.as_ref()
+    let response_type_str = if matches!(method, HttpMethod::Get) && !path.contains('{') {
+        returns.as_ref().map(|r| format!("List[{}]", r))
+    } else {
+        returns.clone()
+    };
+
+    let response_model = response_type_str.as_ref()
         .map(|r| format!(", response_model={}", r))
         .unwrap_or_default();
 
@@ -116,7 +123,11 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
 
     // Add body parameter for POST/PUT/PATCH
     if matches!(method, HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch) {
-        if let Some(return_type) = &returns {
+        // If action has params, use generated Request model
+        if !action.params.is_empty() {
+             let request_model = format!("{}Request", crate::codegen::python::models::capitalize(&action.name));
+             params.push(format!("data: {}", request_model));
+        } else if let Some(return_type) = &returns {
             // Use Create model for POST, Update for PATCH/PUT
             let body_model = if matches!(method, HttpMethod::Post) {
                 format!("{}Create", return_type)
@@ -130,10 +141,15 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
     // Add database dependency
     params.push("db: Session = Depends(get_db)".to_string());
 
+    // Add auth dependency if required
+    if requires_auth {
+        params.push("current_user: dict = Depends(get_current_user_token)".to_string());
+    }
+
     let params_str = params.join(", ");
     
     // Return type annotation
-    let return_annotation = returns.as_ref()
+    let return_annotation = response_type_str.as_ref()
         .map(|r| format!(" -> {}", r))
         .unwrap_or_else(|| " -> dict".to_string());
 
@@ -182,6 +198,38 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
                 content.push_str("    # Generate UUID for new record\n");
                 content.push_str("    data_dict = data.model_dump()\n");
                 content.push_str("    data_dict['id'] = str(uuid.uuid4())\n");
+                
+                // Process parameter logic (mapping and hashing)
+                if !action.params.is_empty() {
+                    for param in &action.params {
+                         let mut target_name = param.name.clone();
+                         let mut needs_hash = false;
+
+                         for dec in &param.decorators {
+                            match dec {
+                                Decorator::Map(name) => target_name = name.clone(),
+                                Decorator::Hash => needs_hash = true,
+                                _ => {}
+                            }
+                         }
+
+                         // If we need to map or hash
+                         if target_name != param.name || needs_hash {
+                             content.push_str(&format!("    # Transform {}\n", param.name));
+                             
+                             // Get value
+                             let val_expr = format!("data_dict.pop('{}')", param.name);
+                             let val_expr = if needs_hash {
+                                 format!("get_password_hash({})", val_expr)
+                             } else {
+                                 val_expr
+                             };
+
+                             content.push_str(&format!("    data_dict['{}'] = {}\n", target_name, val_expr));
+                         }
+                    }
+                }
+                
                 content.push_str(&format!(
                     "    db_obj = {}(**data_dict)\n",
                     model_name
@@ -261,57 +309,80 @@ fn generate_route(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
 }
 
 /// Generate CRUD routes for an entity
-fn generate_entity_crud_routes(entity: &crate::ast::Entity, _ast: &IntentFile) -> CompileResult<String> {
+fn generate_entity_crud_routes(entity: &crate::ast::Entity, ast: &IntentFile) -> CompileResult<String> {
     let mut content = String::new();
     let entity_lower = entity.name.to_lowercase();
     let model_name = format!("{}Model", entity.name);
 
+    // Helper to check if a route already exists
+    let route_exists = |method: HttpMethod, path_suffix: &str| -> bool {
+        let expected_path = format!("/{}{}", entity_lower, path_suffix); // e.g. /users or /users/{id}
+        // Note: This is a simplified check. It assumes standard naming conventions.
+        // A more robust check would match against the actual path string defined in decorators.
+        ast.actions.iter().any(|a| {
+            a.decorators.iter().any(|d| {
+                if let Decorator::Api { method: m, path: p } = d {
+                    // Match method and path (roughly)
+                    m == &method && (p == &expected_path || p == &format!("/{}s{}", entity_lower, path_suffix))
+                } else {
+                    false
+                }
+            })
+        })
+    };
+
     // List all
-    content.push_str(&format!(
-        "# Auto-generated CRUD for {}\n",
-        entity.name
-    ));
-    
-    content.push_str(&format!(
-        "@router.get(\"/{0}s\", response_model=List[{1}])\n",
-        entity_lower, entity.name
-    ));
-    content.push_str(&format!(
-        "async def list_{0}s(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)) -> List[{1}]:\n",
-        entity_lower, entity.name
-    ));
-    content.push_str(&format!(
-        "    \"\"\"List all {0}s\"\"\"\n",
-        entity_lower
-    ));
-    content.push_str(&format!(
-        "    return db.query({0}).offset(skip).limit(limit).all()\n\n\n",
-        model_name
-    ));
+    // Check if GET /entities already exists
+    if !route_exists(HttpMethod::Get, "s") {
+        content.push_str(&format!(
+            "# Auto-generated CRUD for {}\n",
+            entity.name
+        ));
+        
+        content.push_str(&format!(
+            "@router.get(\"/{0}s\", response_model=List[{1}])\n",
+            entity_lower, entity.name
+        ));
+        content.push_str(&format!(
+            "async def list_{0}s(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)) -> List[{1}]:\n",
+            entity_lower, entity.name
+        ));
+        content.push_str(&format!(
+            "    \"\"\"List all {0}s\"\"\"\n",
+            entity_lower
+        ));
+        content.push_str(&format!(
+            "    return db.query({0}).offset(skip).limit(limit).all()\n\n\n",
+            model_name
+        ));
+    }
 
     // Get by ID
-    content.push_str(&format!(
-        "@router.get(\"/{0}s/{{id}}\", response_model={1})\n",
-        entity_lower, entity.name
-    ));
-    content.push_str(&format!(
-        "async def get_{0}(id: str, db: Session = Depends(get_db)) -> {1}:\n",
-        entity_lower, entity.name
-    ));
-    content.push_str(&format!(
-        "    \"\"\"Get {0} by ID\"\"\"\n",
-        entity_lower
-    ));
-    content.push_str(&format!(
-        "    result = db.query({0}).filter({0}.id == id).first()\n",
-        model_name
-    ));
-    content.push_str("    if not result:\n");
-    content.push_str(&format!(
-        "        raise HTTPException(status_code=404, detail=\"{} not found\")\n",
-        entity.name
-    ));
-    content.push_str("    return result\n\n\n");
+    // Check if GET /entities/{id} already exists
+    if !route_exists(HttpMethod::Get, "s/{id}") {
+        content.push_str(&format!(
+            "@router.get(\"/{0}s/{{id}}\", response_model={1})\n",
+            entity_lower, entity.name
+        ));
+        content.push_str(&format!(
+            "async def get_{0}(id: str, db: Session = Depends(get_db)) -> {1}:\n",
+            entity_lower, entity.name
+        ));
+        content.push_str(&format!(
+            "    \"\"\"Get {0} by ID\"\"\"\n",
+            entity_lower
+        ));
+        content.push_str(&format!(
+            "    result = db.query({0}).filter({0}.id == id).first()\n",
+            model_name
+        ));
+        content.push_str("    if not result:\n");
+        content.push_str(&format!(
+            "        raise HTTPException(status_code=404, detail=\"{} not found\")\n",
+            entity.name
+        ));
+        content.push_str("    return result\n\n\n");
+    }
 
     Ok(content)
 }

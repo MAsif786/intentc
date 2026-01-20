@@ -166,7 +166,7 @@ fn generate_api_tests(ast: &IntentFile) -> CompileResult<String> {
 
     // Generate tests for each entity's CRUD endpoints
     for entity in &ast.entities {
-        content.push_str(&generate_entity_api_tests(entity)?);
+        content.push_str(&generate_entity_api_tests(entity, ast)?);
         content.push_str("\n\n");
     }
 
@@ -180,25 +180,43 @@ fn generate_api_tests(ast: &IntentFile) -> CompileResult<String> {
 }
 
 /// Generate API tests for an entity
-fn generate_entity_api_tests(entity: &Entity) -> CompileResult<String> {
+fn generate_entity_api_tests(entity: &Entity, ast: &IntentFile) -> CompileResult<String> {
     let mut content = String::new();
     let entity_lower = entity.name.to_lowercase();
 
     content.push_str(&format!("class Test{}API:\n", entity.name));
     content.push_str(&format!("    \"\"\"API tests for {} endpoints\"\"\"\n\n", entity.name));
 
+    // Helper to check if a route already exists (matches logic in api.rs)
+    let route_exists = |method: crate::ast::HttpMethod, path_suffix: &str| -> bool {
+        let expected_path = format!("/{}{}", entity_lower, path_suffix);
+        ast.actions.iter().any(|a| {
+            a.decorators.iter().any(|d| {
+                if let Decorator::Api { method: m, path: p } = d {
+                    m == &method && (p == &expected_path || p == &format!("/{}s{}", entity_lower, path_suffix))
+                } else {
+                    false
+                }
+            })
+        })
+    };
+
     // Test list endpoint
-    content.push_str(&format!("    def test_list_{}s(self, client):\n", entity_lower));
-    content.push_str(&format!("        \"\"\"Test listing all {}s\"\"\"\n", entity_lower));
-    content.push_str(&format!("        response = client.get(\"/{}s\")\n", entity_lower));
-    content.push_str("        assert response.status_code == 200\n");
-    content.push_str("        assert isinstance(response.json(), list)\n\n");
+    if !route_exists(crate::ast::HttpMethod::Get, "s") {
+        content.push_str(&format!("    def test_list_{}s(self, client):\n", entity_lower));
+        content.push_str(&format!("        \"\"\"Test listing all {}s\"\"\"\n", entity_lower));
+        content.push_str(&format!("        response = client.get(\"/{}s\")\n", entity_lower));
+        content.push_str("        assert response.status_code == 200\n");
+        content.push_str("        assert isinstance(response.json(), list)\n\n");
+    }
 
     // Test get by ID (expects 404 for non-existent)
-    content.push_str(&format!("    def test_get_{}_not_found(self, client):\n", entity_lower));
-    content.push_str(&format!("        \"\"\"Test getting a non-existent {}\"\"\"\n", entity_lower));
-    content.push_str(&format!("        response = client.get(\"/{}s/nonexistent-id\")\n", entity_lower));
-    content.push_str("        assert response.status_code == 404\n");
+    if !route_exists(crate::ast::HttpMethod::Get, "s/{id}") {
+        content.push_str(&format!("    def test_get_{}_not_found(self, client):\n", entity_lower));
+        content.push_str(&format!("        \"\"\"Test getting a non-existent {}\"\"\"\n", entity_lower));
+        content.push_str(&format!("        response = client.get(\"/{}s/nonexistent-id\")\n", entity_lower));
+        content.push_str("        assert response.status_code == 404\n");
+    }
 
     Ok(content)
 }
@@ -218,6 +236,7 @@ fn generate_action_test(action: &Action) -> CompileResult<String> {
 
     if let Some((method, path)) = api_info {
         let method_str = format!("{:?}", method).to_lowercase();
+        let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
         
         content.push_str(&format!("def test_{}(client):\n", action.name));
         content.push_str(&format!("    \"\"\"Test {} endpoint\"\"\"\n", action.name));
@@ -225,16 +244,33 @@ fn generate_action_test(action: &Action) -> CompileResult<String> {
         // Replace path params with test values
         let test_path = path.replace("{id}", "test-id");
         
-        content.push_str(&format!("    response = client.{}(\"{}\"", method_str, test_path));
-        
-        // Add body for POST/PUT/PATCH
+        // Build JSON body if needed
+        let mut json_arg = String::new();
         if matches!(method, crate::ast::HttpMethod::Post | crate::ast::HttpMethod::Put | crate::ast::HttpMethod::Patch) {
-            content.push_str(", json={}");
+            if let Some(input) = &action.input {
+                if !input.fields.is_empty() {
+                    let mut json_body = String::from("json={");
+                    for (i, field) in input.fields.iter().enumerate() {
+                        if i > 0 { json_body.push_str(", "); }
+                        json_body.push_str(&format!("\"{}\": {}", field.name, get_sample_value(&field.param_type)));
+                    }
+                    json_body.push_str("}");
+                    json_arg = format!(", {}", json_body);
+                }
+            } else {
+                 json_arg = ", json={}".to_string();
+            }
         }
         
-        content.push_str(")\n");
-        content.push_str("    # Add assertions based on expected behavior\n");
-        content.push_str("    assert response.status_code in [200, 201, 400, 404]\n");
+        content.push_str(&format!("    response = client.{}(\"{}\"{})\n", method_str, test_path, json_arg));
+        
+        if requires_auth {
+             content.push_str("    # Expect 401 Unauthorized for unauthenticated requests\n");
+             content.push_str("    assert response.status_code == 401\n");
+        } else {
+             content.push_str("    # Add assertions based on expected behavior\n");
+             content.push_str("    assert response.status_code in [200, 201, 400, 404, 422]\n");
+        }
     }
 
     Ok(content)
@@ -247,11 +283,15 @@ fn get_sample_value(field_type: &crate::ast::FieldType) -> String {
         crate::ast::FieldType::Number => "42.0".to_string(),
         crate::ast::FieldType::Boolean => "True".to_string(),
         crate::ast::FieldType::DateTime => "\"2024-01-01T00:00:00\"".to_string(),
+        crate::ast::FieldType::Uuid => "\"550e8400-e29b-41d4-a716-446655440000\"".to_string(),
+        crate::ast::FieldType::Email => "\"test@example.com\"".to_string(),
         crate::ast::FieldType::Enum(values) => {
             format!("\"{}\"", values.first().unwrap_or(&"value".to_string()))
         }
         crate::ast::FieldType::Reference(_) => "\"ref_id\"".to_string(),
+        crate::ast::FieldType::Ref(_) => "\"ref_id\"".to_string(),
         crate::ast::FieldType::Array(_) => "[]".to_string(),
+        crate::ast::FieldType::List(_) => "[]".to_string(),
         crate::ast::FieldType::Optional(inner) => get_sample_value(inner),
     }
 }

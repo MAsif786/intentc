@@ -139,6 +139,8 @@ fn field_type_to_sqlalchemy(field_type: &FieldType) -> String {
         FieldType::Number => "Float".to_string(),
         FieldType::Boolean => "Boolean".to_string(),
         FieldType::DateTime => "DateTime".to_string(),
+        FieldType::Uuid => "String(36)".to_string(),  // UUID stored as 36-char string
+        FieldType::Email => "String(255)".to_string(), // Email as string
         FieldType::Enum(values) => {
             let enum_values = values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", ");
             format!("Enum({})", enum_values)
@@ -146,7 +148,11 @@ fn field_type_to_sqlalchemy(field_type: &FieldType) -> String {
         FieldType::Reference(name) => {
             format!("ForeignKey(\"{}.id\")", name.to_lowercase() + "s")
         }
+        FieldType::Ref(name) => {
+            format!("ForeignKey(\"{}.id\")", name.to_lowercase() + "s")
+        }
         FieldType::Array(_) => "String".to_string(), // Store as JSON string
+        FieldType::List(_) => "String".to_string(),  // Store as JSON string
         FieldType::Optional(inner) => field_type_to_sqlalchemy(inner),
     }
 }

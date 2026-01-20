@@ -262,6 +262,8 @@ fn generate_column_def(field: &crate::ast::Field) -> CompileResult<String> {
         FieldType::Number => "sa.Float()".to_string(),
         FieldType::Boolean => "sa.Boolean()".to_string(),
         FieldType::DateTime => "sa.DateTime()".to_string(),
+        FieldType::Uuid => "sa.String(36)".to_string(),  // UUID as 36-char string
+        FieldType::Email => "sa.String(255)".to_string(), // Email as string
         FieldType::Enum(values) => {
             let vals = values.iter().map(|v| format!("'{}'", v)).collect::<Vec<_>>().join(", ");
             format!("sa.Enum({})", vals)
@@ -269,12 +271,18 @@ fn generate_column_def(field: &crate::ast::Field) -> CompileResult<String> {
         FieldType::Reference(name) => {
             format!("sa.String(255), sa.ForeignKey('{}.id')", name.to_lowercase() + "s")
         }
+        FieldType::Ref(name) => {
+            format!("sa.String(255), sa.ForeignKey('{}.id')", name.to_lowercase() + "s")
+        }
         FieldType::Array(_) => "sa.JSON()".to_string(),
+        FieldType::List(_) => "sa.JSON()".to_string(),
         FieldType::Optional(inner) => match inner.as_ref() {
             FieldType::String => "sa.String(255)".to_string(),
             FieldType::Number => "sa.Float()".to_string(),
             FieldType::Boolean => "sa.Boolean()".to_string(),
             FieldType::DateTime => "sa.DateTime()".to_string(),
+            FieldType::Uuid => "sa.String(36)".to_string(),
+            FieldType::Email => "sa.String(255)".to_string(),
             _ => "sa.String(255)".to_string(),
         },
     };

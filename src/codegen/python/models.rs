@@ -173,13 +173,21 @@ fn field_type_to_python(field_type: &FieldType) -> String {
         FieldType::Number => "float".to_string(),
         FieldType::Boolean => "bool".to_string(),
         FieldType::DateTime => "datetime".to_string(),
+        FieldType::Uuid => "str".to_string(),  // UUID as string
+        FieldType::Email => "str".to_string(), // Email as string
         FieldType::Enum(values) => {
             format!("Literal[{}]", values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", "))
         }
-        FieldType::Reference(name) => format!("\"{}\"", name),
+        FieldType::Reference(_) | FieldType::Ref(_) => "str".to_string(), // Reference is ID string
         FieldType::Array(inner) => format!("list[{}]", field_type_to_python(inner)),
+        FieldType::List(inner) => format!("list[{}]", field_type_to_python(inner)),
         FieldType::Optional(inner) => format!("Optional[{}]", field_type_to_python(inner)),
     }
+}
+
+/// Convert IDL field type to Python input type string
+fn field_type_to_python_input(field_type: &FieldType) -> String {
+    field_type_to_python(field_type)
 }
 
 /// Format a default value for Python
@@ -222,7 +230,7 @@ fn generate_models_init(ast: &IntentFile) -> String {
     }
 
     // Import request models
-    let requests_exist = ast.actions.iter().any(|a| !a.params.is_empty());
+    let requests_exist = ast.actions.iter().any(|a| a.input.as_ref().map(|i| !i.fields.is_empty()).unwrap_or(false));
     if requests_exist {
         content.push_str("from .requests import *\n");
     }
@@ -233,15 +241,40 @@ fn generate_models_init(ast: &IntentFile) -> String {
         content.push_str(&format!("    \"{}Create\",\n", entity.name));
         content.push_str(&format!("    \"{}Update\",\n", entity.name));
     }
-    content.push_str("]\n");
+    
+    // Add request models AND response models to __all__
+    for action in &ast.actions {
+        let has_input = action.input.as_ref().map(|i| !i.fields.is_empty()).unwrap_or(false);
+        if has_input {
+            let model_name = format!("{}Request", to_pascal_case(&action.name));
+            content.push_str(&format!("    \"{}\",\n", model_name));
+        }
+        
+        // Add response model if applicable
+        if let Some(output) = &action.output {
+            if !output.fields.is_empty() {
+                 let model_name = format!("{}{}Response", output.entity, to_pascal_case(&action.name));
+                 content.push_str(&format!("    \"{}\",\n", model_name));
+            }
+        }
+    }
+    
+    content.push_str("]\n\n");
 
+    // Rebuild models to resolve circular references
+    for entity in &ast.entities {
+        content.push_str(&format!("{}.model_rebuild()\n", entity.name));
+        content.push_str(&format!("{}Create.model_rebuild()\n", entity.name));
+        content.push_str(&format!("{}Update.model_rebuild()\n", entity.name));
+    }
+    
     content
 }
 
 /// Generate request models for actions
 fn generate_action_requests(ast: &IntentFile) -> CompileResult<(String, usize)> {
     let mut content = String::new();
-    let mut count = 0;
+    let mut model_names = Vec::new();
 
     content.push_str("# Intent Compiler Generated Request Models\n");
     content.push_str("from typing import Optional, List, Literal\n");
@@ -249,24 +282,80 @@ fn generate_action_requests(ast: &IntentFile) -> CompileResult<(String, usize)> 
     content.push_str("from pydantic import BaseModel, Field\n\n\n");
 
     for action in &ast.actions {
-        if action.params.is_empty() {
+        let input_fields = action.input.as_ref().map(|i| &i.fields);
+        if input_fields.map(|f| f.is_empty()).unwrap_or(true) {
             continue;
         }
 
-        count += 1;
-        let model_name = format!("{}Request", capitalize(&action.name));
+        let model_name = format!("{}Request", to_pascal_case(&action.name));
+        model_names.push(model_name.clone());
         content.push_str(&format!("class {}(BaseModel):\n", model_name));
         content.push_str("    model_config = {\"extra\": \"forbid\"}\n");
         
-        for param in &action.params {
-             let python_type = field_type_to_python(&param.param_type);
-             content.push_str(&format!("    {}: {}\n", param.name, python_type));
+        if let Some(fields) = input_fields {
+            for param in fields {
+                 let python_type = field_type_to_python_input(&param.param_type);
+                 content.push_str(&format!("    {}: {}\n", param.name, python_type));
+            }
         }
         content.push_str("\n\n");
     }
 
-    if count == 0 {
-        return Ok((String::new(), 0));
+    if model_names.is_empty() {
+        // Continue to response models (don't return early yet)
+    } else {
+        // Add __all__ for proper import * support
+        let all_items = model_names.iter()
+            .map(|n| format!("\"{}\"", n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        content.push_str(&format!("__all__ = [{}]\n", all_items));
+    }
+
+    // Generate response models for output projections
+    content.push_str("\n# Output projection models\n");
+    let mut response_models = Vec::new();
+    
+    for action in &ast.actions {
+        if let Some(output) = &action.output {
+            if !output.fields.is_empty() {
+                // Find entity to get field types
+                let entity = ast.entities.iter().find(|e| e.name == output.entity);
+                if let Some(entity) = entity {
+                    let model_name = format!("{}{}Response", output.entity, to_pascal_case(&action.name));
+                    response_models.push(model_name.clone());
+                    
+                    content.push_str(&format!("class {}(BaseModel):\n", model_name));
+                    content.push_str("    model_config = {\"extra\": \"ignore\"}\n");
+                    
+                    for field_name in &output.fields {
+                        // Find field in entity
+                        if let Some(field) = entity.fields.iter().find(|f| &f.name == field_name) {
+                            let python_type = field_type_to_python(&field.field_type);
+                            // We make fields in response models optional? Or required if they are in entity?
+                            // Generally if it's a projection, value should be there.
+                            content.push_str(&format!("    {}: {}\n", field.name, python_type));
+                        } else {
+                            // Fallback if field not found (e.g. implicitly 'id')
+                             content.push_str(&format!("    {}: str\n", field_name));
+                        }
+                    }
+                    content.push_str("\n\n");
+                }
+            }
+        }
+    }
+    
+    if !response_models.is_empty() {
+         let all_items = response_models.iter()
+            .map(|n| format!("\"{}\"", n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if model_names.is_empty() {
+             content.push_str(&format!("__all__ = [{}]\n", all_items));
+        } else {
+             content.push_str(&format!("__all__.extend([{}])\n", all_items));
+        }
     }
 
     let lines = content.lines().count();
@@ -280,4 +369,12 @@ pub fn capitalize(s: &str) -> String {
         None => String::new(),
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
     }
+}
+
+/// Convert snake_case to PascalCase
+pub fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|part| capitalize(part))
+        .collect::<Vec<_>>()
+        .join("")
 }

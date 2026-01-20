@@ -8,6 +8,7 @@ mod rules;
 mod migrations;
 mod tests;
 mod auth;
+mod policies;
 
 use std::fs;
 use std::path::Path;
@@ -70,7 +71,8 @@ pydantic-settings>=2.1.0
 # Utilities
 python-dotenv>=1.0.0
 pyjwt>=2.8.0
-passlib[bcrypt]>=1.7.4
+passlib>=1.7.4
+bcrypt==4.0.1
 
 # Testing
 pytest>=7.4.0
@@ -279,6 +281,10 @@ impl CodeGenerator for PythonGenerator {
         // Generate migrations
         let migrations_result = migrations::generate_migrations(ast, output_dir)?;
         result.merge(migrations_result);
+
+        // Generate policies
+        let policies_result = policies::generate_policies(ast, output_dir)?;
+        result.merge(policies_result);
 
         // Generate tests
         if self.generate_tests {

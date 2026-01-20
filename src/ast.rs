@@ -1,5 +1,6 @@
 // Intent Compiler - AST Definitions
 // These types represent the parsed structure of Intent Definition Language files
+// v0.1 Spec Implementation
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +10,7 @@ pub struct IntentFile {
     pub entities: Vec<Entity>,
     pub actions: Vec<Action>,
     pub rules: Vec<Rule>,
+    pub policies: Vec<Policy>,
     /// Source file path for error reporting
     pub source_path: Option<String>,
 }
@@ -18,6 +20,7 @@ pub struct IntentFile {
 pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
+    pub policies: Vec<Policy>,
     pub location: SourceLocation,
 }
 
@@ -30,24 +33,30 @@ pub struct Field {
     pub location: SourceLocation,
 }
 
-/// Supported field types in IDL
+/// Supported field types in IDL (v0.1)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FieldType {
     String,
     Number,
     Boolean,
     DateTime,
+    Uuid,   // v0.1: UUID type
+    Email,  // v0.1: Email type with format validation
     /// Enum type with possible values: status: active | inactive
     Enum(Vec<String>),
     /// Reference to another entity: author: User
     Reference(String),
+    /// v0.1 ref type: ref<User>
+    Ref(String),
     /// Array of a type: tags: [string]
     Array(Box<FieldType>),
+    /// v0.1 list type: list<string>
+    List(Box<FieldType>),
     /// Optional type: email: string?
     Optional(Box<FieldType>),
 }
 
-/// Field and action decorators
+/// Field and action decorators (v0.1)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Decorator {
     /// @primary - marks field as primary key
@@ -56,20 +65,44 @@ pub enum Decorator {
     Unique,
     /// @optional - marks field as optional
     Optional,
-    /// @default(value) - sets default value
-    Default(String),
-    /// @api METHOD /path - defines API endpoint
-    Api { method: HttpMethod, path: String },
-    /// @returns TypeName - specifies return type
-    Returns(String),
-    /// @auth - requires authentication
-    Auth,
+    /// @auto - auto-generated field (e.g., timestamps, UUIDs)
+    Auto,
     /// @index - creates database index
     Index,
-    /// @hash - hashes the value (e.g. password)
+    /// @default(value) - sets default value
+    Default(String),
+    /// @validate(min:, max:, pattern:) - validation constraints (v0.1)
+    Validate(ValidationConstraints),
+    /// @api METHOD /path - defines API endpoint
+    Api { method: HttpMethod, path: String },
+    /// @auth or @auth(Entity) or @auth(action(args)) - requires authentication
+    Auth { name: Option<String>, args: Vec<String> },
+    /// @map(target, transform) - maps field with optional transform (v0.1)
+    Map { target: String, transform: MapTransform },
+    /// @policy(Name) - enforces a policy
+    Policy(String),
+}
+
+/// Validation constraints for @validate decorator (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ValidationConstraints {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub pattern: Option<String>,
+    pub required: Option<bool>,
+}
+
+/// Map transform types for @map decorator (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum MapTransform {
+    None,
     Hash,
-    /// @map(name) - maps field to another name
-    Map(String),
+}
+
+impl Default for MapTransform {
+    fn default() -> Self {
+        MapTransform::None
+    }
 }
 
 /// HTTP methods for API decorators
@@ -94,13 +127,64 @@ impl std::fmt::Display for HttpMethod {
     }
 }
 
-/// Action definition - represents an operation/endpoint
+/// Action definition - represents an operation/endpoint (v0.1 structured)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     pub name: String,
-    pub params: Vec<ActionParam>,
+    /// Pre-action decorators: @api, @auth
     pub decorators: Vec<Decorator>,
+    /// Input section with parameters
+    pub input: Option<InputSection>,
+    /// Process section with derive statements
+    pub process: Option<ProcessSection>,
+    /// Output section with entity projection
+    pub output: Option<OutputSection>,
     pub location: SourceLocation,
+}
+
+/// Input section for action (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputSection {
+    pub fields: Vec<ActionParam>,
+}
+
+/// Process section for action (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessSection {
+    pub derives: Vec<DeriveStatement>,
+}
+
+/// Derive statement in process section (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeriveStatement {
+    pub name: String,
+    pub value: DeriveValue,
+    pub location: SourceLocation,
+}
+
+/// Value for derive statement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DeriveValue {
+    Literal(LiteralValue),
+    FieldAccess { path: Vec<String> },
+    Identifier(String),
+    FunctionCall { name: String, args: Vec<FunctionArg> },
+}
+
+/// Argument for function call in derive
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FunctionArg {
+    TypeName(String),
+    Identifier(String),
+    FieldAccess { path: Vec<String> },
+    Literal(LiteralValue),
+}
+
+/// Output section for action (v0.1)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputSection {
+    pub entity: String,
+    pub fields: Vec<String>,
 }
 
 /// Parameter for an action
@@ -120,6 +204,16 @@ pub struct Rule {
     pub consequence: Consequence,
     pub location: SourceLocation,
 }
+
+/// Policy definition - authorization constraint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Policy {
+    pub name: String,
+    pub subject: String,
+    pub require: Expression,
+    pub location: SourceLocation,
+}
+
 
 /// Expression for rule conditions
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +331,7 @@ impl IntentFile {
             entities: Vec::new(),
             actions: Vec::new(),
             rules: Vec::new(),
+            policies: Vec::new(),
             source_path: None,
         }
     }
@@ -276,9 +371,13 @@ impl FieldType {
             FieldType::Number => "float".to_string(),
             FieldType::Boolean => "bool".to_string(),
             FieldType::DateTime => "datetime".to_string(),
+            FieldType::Uuid => "UUID".to_string(),
+            FieldType::Email => "EmailStr".to_string(),
             FieldType::Enum(values) => format!("Literal[{}]", values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", ")),
             FieldType::Reference(name) => name.clone(),
+            FieldType::Ref(name) => name.clone(),
             FieldType::Array(inner) => format!("list[{}]", inner.to_python_type()),
+            FieldType::List(inner) => format!("list[{}]", inner.to_python_type()),
             FieldType::Optional(inner) => format!("Optional[{}]", inner.to_python_type()),
         }
     }
@@ -290,10 +389,35 @@ impl FieldType {
             FieldType::Number => "Float".to_string(),
             FieldType::Boolean => "Boolean".to_string(),
             FieldType::DateTime => "DateTime".to_string(),
+            FieldType::Uuid => "String".to_string(),  // UUID stored as string
+            FieldType::Email => "String".to_string(), // Email stored as string
             FieldType::Enum(values) => format!("Enum({})", values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", ")),
             FieldType::Reference(name) => format!("ForeignKey(\"{}.id\")", name.to_lowercase()),
+            FieldType::Ref(name) => format!("ForeignKey(\"{}.id\")", name.to_lowercase()),
             FieldType::Array(_) => "JSON".to_string(), // Arrays stored as JSON
+            FieldType::List(_) => "JSON".to_string(),  // Lists stored as JSON
             FieldType::Optional(inner) => inner.to_sqlalchemy_type(),
         }
+    }
+}
+
+impl Action {
+    /// Get input fields (for backward compatibility)
+    pub fn get_input_fields(&self) -> Vec<&ActionParam> {
+        self.input.as_ref()
+            .map(|i| i.fields.iter().collect())
+            .unwrap_or_default()
+    }
+    
+    /// Get output entity name
+    pub fn get_output_entity(&self) -> Option<&str> {
+        self.output.as_ref().map(|o| o.entity.as_str())
+    }
+    
+    /// Get output field projections
+    pub fn get_output_fields(&self) -> Vec<&str> {
+        self.output.as_ref()
+            .map(|o| o.fields.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
     }
 }

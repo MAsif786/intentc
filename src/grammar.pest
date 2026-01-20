@@ -1,5 +1,5 @@
 // Intent Definition Language Grammar (PEG)
-// Parser grammar for .intent files
+// Parser grammar for .intent files - v0.1 Spec
 
 // We DON'T use pest's implicit whitespace handling
 // because we need explicit indentation matching
@@ -15,7 +15,7 @@ indent = _{ "    " | "\t" }
 intent_file = { SOI ~ (nl | definition)* ~ EOI }
 
 // Top-level definitions
-definition = { entity_def | action_def | rule_def }
+definition = { entity_def | full_action_def | rule_def | policy_def }
 
 // ============================================
 // Entity Definition 
@@ -27,9 +27,11 @@ entity_def = {
 
 entity_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
-entity_fields = { entity_field* }
+entity_fields = { (entity_item | nl)* }
 
+entity_item = { entity_policy | entity_field }
 entity_field = { indent ~ field_def ~ nl }
+entity_policy = { indent ~ nested_policy_def }
 
 field_def = {
     field_name ~ ":" ~ ws* ~ field_type ~ (ws+ ~ decorator)*
@@ -37,11 +39,15 @@ field_def = {
 
 field_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
 
-field_type = { array_type | optional_type | base_type }
+// ============================================
+// Type System (v0.1)
+// ============================================
+field_type = { list_type | ref_type | array_type | optional_type | base_type }
 
 base_type = { enum_type | primitive_type | reference_type }
 
-primitive_type = @{ "string" | "number" | "boolean" | "datetime" }
+// v0.1 primitive types: string, number, boolean, datetime, uuid, email
+primitive_type = @{ "string" | "number" | "boolean" | "datetime" | "uuid" | "email" }
 
 enum_type = { enum_value ~ (ws* ~ "|" ~ ws* ~ enum_value)+ }
 
@@ -53,25 +59,75 @@ array_type = { "[" ~ ws* ~ base_type ~ ws* ~ "]" }
 
 optional_type = { base_type ~ "?" }
 
+// v0.1 composite types: ref<Entity>, list<T>
+ref_type = { "ref" ~ "<" ~ ws* ~ type_name ~ ws* ~ ">" }
+
+list_type = { "list" ~ "<" ~ ws* ~ field_type ~ ws* ~ ">" }
+
 // ============================================
-// Action Definition
+// Action Definition (v0.1 structured syntax)
 // ============================================
-action_def = {
+full_action_def = {
+    pre_action_decorators ~
     "action" ~ ws+ ~ action_name ~ ":" ~ nl ~
-    action_lines
+    action_body
 }
+
+pre_action_decorators = { (pre_action_decorator ~ nl)* }
+
+pre_action_decorator = { decorator }
 
 action_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
 
-action_lines = { action_line* }
-
-action_line = { indent ~ (action_param | decorator) ~ nl }
-
-action_param = {
-    param_name ~ ":" ~ ws* ~ field_type ~ (ws+ ~ decorator)*
+action_body = { 
+    input_section? ~ 
+    process_section? ~ 
+    output_section?
 }
 
-param_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+// Input section: input fields with types and decorators
+input_section = { 
+    indent ~ "input:" ~ nl ~ 
+    input_fields 
+}
+
+input_fields = { input_field* }
+
+input_field = { 
+    indent ~ indent ~ field_name ~ ":" ~ ws* ~ field_type ~ (ws+ ~ decorator)* ~ nl 
+}
+
+// Process section: derive statements
+process_section = { 
+    indent ~ "process:" ~ nl ~ 
+    derive_statements 
+}
+
+derive_statements = { derive_statement* }
+
+derive_statement = { 
+    indent ~ indent ~ "derive" ~ ws+ ~ identifier ~ ws* ~ "=" ~ ws* ~ derive_expr ~ nl 
+}
+
+// Derive expression: function call, dotted path, literal, or identifier
+derive_expr = { function_call | dotted_path | literal | identifier }
+
+// Function call: find(User, email, status) or create_jwt(user.email)
+function_call = { identifier ~ "(" ~ ws* ~ function_args? ~ ws* ~ ")" }
+function_args = { function_arg ~ (ws* ~ "," ~ ws* ~ function_arg)* }
+function_arg = { dotted_path | type_name | literal | identifier }
+
+dotted_path = { path_segment ~ ("." ~ path_segment)+ }
+path_segment = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Output section: entity projection
+output_section = { 
+    indent ~ "output:" ~ ws+ ~ type_projection ~ nl 
+}
+
+type_projection = { type_name ~ "(" ~ ws* ~ projection_fields ~ ws* ~ ")" }
+
+projection_fields = { identifier ~ (ws* ~ "," ~ ws* ~ identifier)* }
 
 // ============================================
 // Rule Definition
@@ -88,27 +144,64 @@ when_clause = { "when" ~ ws+ ~ expression }
 then_clause = { "then" ~ ws+ ~ consequence }
 
 // ============================================
-// Decorators
+// Policy Definition (v0.1)
+// ============================================
+policy_def = {
+    "policy" ~ ws+ ~ policy_name ~ ":" ~ nl ~
+    indent ~ "subject" ~ ":" ~ ws+ ~ subject_name ~ nl ~
+    indent ~ "require" ~ ws+ ~ expression ~ nl
+}
+
+nested_policy_def = {
+    "policy" ~ ws+ ~ policy_name ~ ":" ~ nl ~
+    indent ~ indent ~ "subject" ~ ":" ~ ws+ ~ subject_name ~ nl ~
+    indent ~ indent ~ "require" ~ ws+ ~ expression ~ nl
+}
+
+policy_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+subject_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// ============================================
+// Decorators (v0.1)
 // ============================================
 decorator = { "@" ~ decorator_type }
 
 decorator_type = {
-    api_decorator | returns_decorator | default_decorator | map_decorator | simple_decorator
+    api_decorator | validate_decorator | default_decorator | 
+    map_decorator | auth_decorator | policy_decorator | simple_decorator
 }
 
-simple_decorator = @{ "primary" | "unique" | "optional" | "auth" | "index" | "hash" }
+// @policy(Name) or @policy(Entity.Name)
+policy_decorator = { "policy" ~ "(" ~ ws* ~ policy_target ~ ws* ~ ")" }
+policy_target = { type_name ~ ("." ~ type_name)? }
 
+// Simple single-word decorators
+simple_decorator = @{ "primary" | "unique" | "optional" | "index" | "auto" }
+
+// @auth or @auth(Entity) or @auth(validate_user(id))
+auth_decorator = { "auth" ~ ("(" ~ ws* ~ auth_target ~ ws* ~ ")")? }
+auth_target = { identifier ~ "(" ~ ws* ~ auth_args? ~ ws* ~ ")" | type_name | identifier }
+auth_args = { identifier ~ (ws* ~ "," ~ ws* ~ identifier)* }
+
+// @api METHOD /path
 api_decorator = { "api" ~ ws+ ~ http_method ~ ws+ ~ api_path }
 http_method = @{ "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }
 api_path = @{ "/" ~ (ASCII_ALPHANUMERIC | "/" | "_" | "-" | "{" | "}")* }
 
-returns_decorator = { "returns" ~ ws+ ~ type_name }
-type_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
-
+// @default(value)
 default_decorator = { "default" ~ "(" ~ ws* ~ default_value ~ ws* ~ ")" }
-default_value = { identifier | string_literal | number_literal }
+default_value = { string_literal | number_literal | boolean_literal | identifier }
 
-map_decorator = { "map" ~ "(" ~ ws* ~ identifier ~ ws* ~ ")" }
+// @map(target_field, transform) - v0.1 with transform
+map_decorator = { "map" ~ "(" ~ ws* ~ identifier ~ ws* ~ ("," ~ ws* ~ transform_type ~ ws*)? ~ ")" }
+transform_type = @{ "none" | "hash" }
+
+// @validate(min: 1, max: 100, pattern: "...") - v0.1
+validate_decorator = { "validate" ~ "(" ~ ws* ~ validate_args ~ ws* ~ ")" }
+validate_args = { validate_arg ~ (ws* ~ "," ~ ws* ~ validate_arg)* }
+validate_arg = { validate_key ~ ws* ~ ":" ~ ws* ~ validate_value }
+validate_key = @{ "min" | "max" | "pattern" | "required" }
+validate_value = { string_literal | number_literal | boolean_literal }
 
 // ============================================
 // Expressions
@@ -136,6 +229,8 @@ number_literal = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 boolean_literal = @{ "true" | "false" }
 
 identifier = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+type_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // ============================================
 // Consequences

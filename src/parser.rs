@@ -1,5 +1,6 @@
 // Intent Compiler - Parser
 // Transforms .intent files into typed AST
+// v0.1 Spec Implementation
 
 use pest::Parser;
 use pest_derive::Parser;
@@ -46,8 +47,9 @@ fn parse_definition(pair: pest::iterators::Pair<Rule>, file: &mut IntentFile) ->
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::entity_def => file.entities.push(parse_entity(inner)?),
-            Rule::action_def => file.actions.push(parse_action(inner)?),
+            Rule::full_action_def => file.actions.push(parse_action(inner)?),
             Rule::rule_def => file.rules.push(parse_rule(inner)?),
+            Rule::policy_def => file.policies.push(parse_policy(inner)?),
             _ => {}
         }
     }
@@ -59,16 +61,31 @@ fn parse_entity(pair: pest::iterators::Pair<Rule>) -> CompileResult<Entity> {
     let location = get_location(&pair);
     let mut name = String::new();
     let mut fields = Vec::new();
+    let mut policies = Vec::new();
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::entity_name => name = inner.as_str().to_string(),
             Rule::entity_fields => {
-                for field_wrapper in inner.into_inner() {
-                    if field_wrapper.as_rule() == Rule::entity_field {
-                        for field_inner in field_wrapper.into_inner() {
-                            if field_inner.as_rule() == Rule::field_def {
-                                fields.push(parse_field(field_inner)?);
+                for item_wrapper in inner.into_inner() {
+                    if item_wrapper.as_rule() == Rule::entity_item {
+                        for item_inner in item_wrapper.into_inner() {
+                            match item_inner.as_rule() {
+                                Rule::entity_field => {
+                                    for field_inner in item_inner.into_inner() {
+                                        if field_inner.as_rule() == Rule::field_def {
+                                            fields.push(parse_field(field_inner)?);
+                                        }
+                                    }
+                                }
+                                Rule::entity_policy => {
+                                    for policy_inner in item_inner.into_inner() {
+                                        if policy_inner.as_rule() == Rule::nested_policy_def {
+                                            policies.push(parse_policy(policy_inner)?);
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -78,7 +95,7 @@ fn parse_entity(pair: pest::iterators::Pair<Rule>) -> CompileResult<Entity> {
         }
     }
 
-    Ok(Entity { name, fields, location })
+    Ok(Entity { name, fields, policies, location })
 }
 
 /// Parse field definition
@@ -104,10 +121,24 @@ fn parse_field(pair: pest::iterators::Pair<Rule>) -> CompileResult<Field> {
     Ok(Field { name, field_type, decorators, location })
 }
 
-/// Parse field type
+/// Parse field type (v0.1 with ref<T> and list<T>)
 fn parse_field_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
+            Rule::list_type => {
+                for list_inner in inner.into_inner() {
+                    if list_inner.as_rule() == Rule::field_type {
+                        return Ok(FieldType::List(Box::new(parse_field_type(list_inner)?)));
+                    }
+                }
+            }
+            Rule::ref_type => {
+                for ref_inner in inner.into_inner() {
+                    if ref_inner.as_rule() == Rule::type_name {
+                        return Ok(FieldType::Ref(ref_inner.as_str().to_string()));
+                    }
+                }
+            }
             Rule::array_type => {
                 for arr_inner in inner.into_inner() {
                     if arr_inner.as_rule() == Rule::base_type {
@@ -129,7 +160,7 @@ fn parse_field_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldTyp
     Ok(FieldType::String)
 }
 
-/// Parse base type
+/// Parse base type (v0.1 with uuid, email)
 fn parse_base_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -139,6 +170,8 @@ fn parse_base_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType
                     "number" => FieldType::Number,
                     "boolean" => FieldType::Boolean,
                     "datetime" => FieldType::DateTime,
+                    "uuid" => FieldType::Uuid,
+                    "email" => FieldType::Email,
                     _ => FieldType::String,
                 });
             }
@@ -159,7 +192,7 @@ fn parse_base_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType
     Ok(FieldType::String)
 }
 
-/// Parse decorator
+/// Parse decorator (v0.1 with @validate, @auto, updated @map)
 fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<Decorator>> {
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::decorator_type {
@@ -170,18 +203,66 @@ fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<De
                             "primary" => Decorator::Primary,
                             "unique" => Decorator::Unique,
                             "optional" => Decorator::Optional,
-                            "auth" => Decorator::Auth,
+                            "auto" => Decorator::Auto,
                             "index" => Decorator::Index,
-                            "hash" => Decorator::Hash,
                             _ => return Ok(None),
                         }));
                     }
-                    Rule::map_decorator => {
-                        for map_inner in dec_inner.into_inner() {
-                            if map_inner.as_rule() == Rule::identifier {
-                                return Ok(Some(Decorator::Map(map_inner.as_str().to_string())));
+                    Rule::auth_decorator => {
+                        let mut name: Option<String> = None;
+                        let mut args: Vec<String> = Vec::new();
+                        
+                        for auth_inner in dec_inner.into_inner() {
+                            if auth_inner.as_rule() == Rule::auth_target {
+                                for target_inner in auth_inner.into_inner() {
+                                    match target_inner.as_rule() {
+                                        Rule::type_name | Rule::identifier => {
+                                            if name.is_none() {
+                                                name = Some(target_inner.as_str().to_string());
+                                            }
+                                        }
+                                        Rule::auth_args => {
+                                            for arg_inner in target_inner.into_inner() {
+                                                if arg_inner.as_rule() == Rule::identifier {
+                                                    args.push(arg_inner.as_str().to_string());
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
+                        return Ok(Some(Decorator::Auth { name, args }));
+                    }
+                    Rule::policy_decorator => {
+                        for policy_inner in dec_inner.into_inner() {
+                            if policy_inner.as_rule() == Rule::policy_target {
+                                let mut name_parts = Vec::new();
+                                for name_inner in policy_inner.into_inner() {
+                                     name_parts.push(name_inner.as_str().to_string());
+                                }
+                                return Ok(Some(Decorator::Policy(name_parts.join("."))));
+                            }
+                        }
+                    }
+                    Rule::map_decorator => {
+                        let mut target = String::new();
+                        let mut transform = MapTransform::None;
+                        
+                        for map_inner in dec_inner.into_inner() {
+                            match map_inner.as_rule() {
+                                Rule::identifier => target = map_inner.as_str().to_string(),
+                                Rule::transform_type => {
+                                    transform = match map_inner.as_str() {
+                                        "hash" => MapTransform::Hash,
+                                        _ => MapTransform::None,
+                                    };
+                                }
+                                _ => {}
+                            }
+                        }
+                        return Ok(Some(Decorator::Map { target, transform }));
                     }
                     Rule::api_decorator => {
                         let mut method = HttpMethod::Get;
@@ -206,12 +287,40 @@ fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<De
 
                         return Ok(Some(Decorator::Api { method, path }));
                     }
-                    Rule::returns_decorator => {
-                        for ret_inner in dec_inner.into_inner() {
-                            if ret_inner.as_rule() == Rule::type_name {
-                                return Ok(Some(Decorator::Returns(ret_inner.as_str().to_string())));
+                    Rule::validate_decorator => {
+                        let mut constraints = ValidationConstraints::default();
+                        
+                        for validate_inner in dec_inner.into_inner() {
+                            if validate_inner.as_rule() == Rule::validate_args {
+                                for arg in validate_inner.into_inner() {
+                                    if arg.as_rule() == Rule::validate_arg {
+                                        let mut key = String::new();
+                                        let mut value = String::new();
+                                        
+                                        for arg_inner in arg.into_inner() {
+                                            match arg_inner.as_rule() {
+                                                Rule::validate_key => key = arg_inner.as_str().to_string(),
+                                                Rule::validate_value => {
+                                                    for val_inner in arg_inner.into_inner() {
+                                                        value = val_inner.as_str().trim_matches('"').to_string();
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        
+                                        match key.as_str() {
+                                            "min" => constraints.min = value.parse().ok(),
+                                            "max" => constraints.max = value.parse().ok(),
+                                            "pattern" => constraints.pattern = Some(value),
+                                            "required" => constraints.required = Some(value == "true"),
+                                            _ => {}
+                                        }
+                                    }
+                                }
                             }
                         }
+                        return Ok(Some(Decorator::Validate(constraints)));
                     }
                     Rule::default_decorator => {
                         for def_inner in dec_inner.into_inner() {
@@ -229,30 +338,44 @@ fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<De
     Ok(None)
 }
 
-/// Parse action definition
+/// Parse action definition (v0.1 structured syntax)
 fn parse_action(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action> {
     let location = get_location(&pair);
     let mut name = String::new();
-    let mut params = Vec::new();
     let mut decorators = Vec::new();
+    let mut input: Option<InputSection> = None;
+    let mut process: Option<ProcessSection> = None;
+    let mut output: Option<OutputSection> = None;
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::action_name => name = inner.as_str().to_string(),
-            Rule::action_lines => {
-                for line in inner.into_inner() {
-                    if line.as_rule() == Rule::action_line {
-                        for line_inner in line.into_inner() {
-                            match line_inner.as_rule() {
-                                Rule::action_param => params.push(parse_action_param(line_inner)?),
-                                Rule::decorator => {
-                                    if let Some(dec) = parse_decorator(line_inner)? {
-                                        decorators.push(dec);
-                                    }
+            Rule::pre_action_decorators => {
+                for dec_wrapper in inner.into_inner() {
+                    if dec_wrapper.as_rule() == Rule::pre_action_decorator {
+                        for dec in dec_wrapper.into_inner() {
+                            if dec.as_rule() == Rule::decorator {
+                                if let Some(d) = parse_decorator(dec)? {
+                                    decorators.push(d);
                                 }
-                                _ => {}
                             }
                         }
+                    }
+                }
+            }
+            Rule::action_name => name = inner.as_str().to_string(),
+            Rule::action_body => {
+                for body_inner in inner.into_inner() {
+                    match body_inner.as_rule() {
+                        Rule::input_section => {
+                            input = Some(parse_input_section(body_inner)?);
+                        }
+                        Rule::process_section => {
+                            process = Some(parse_process_section(body_inner)?);
+                        }
+                        Rule::output_section => {
+                            output = Some(parse_output_section(body_inner)?);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -260,11 +383,28 @@ fn parse_action(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action> {
         }
     }
 
-    Ok(Action { name, params, decorators, location })
+    Ok(Action { name, decorators, input, process, output, location })
 }
 
-/// Parse action parameter
-fn parse_action_param(pair: pest::iterators::Pair<Rule>) -> CompileResult<ActionParam> {
+/// Parse input section
+fn parse_input_section(pair: pest::iterators::Pair<Rule>) -> CompileResult<InputSection> {
+    let mut fields = Vec::new();
+
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::input_fields {
+            for field in inner.into_inner() {
+                if field.as_rule() == Rule::input_field {
+                    fields.push(parse_input_field(field)?);
+                }
+            }
+        }
+    }
+
+    Ok(InputSection { fields })
+}
+
+/// Parse input field
+fn parse_input_field(pair: pest::iterators::Pair<Rule>) -> CompileResult<ActionParam> {
     let location = get_location(&pair);
     let mut name = String::new();
     let mut param_type = FieldType::String;
@@ -272,7 +412,7 @@ fn parse_action_param(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::param_name => name = inner.as_str().to_string(),
+            Rule::field_name => name = inner.as_str().to_string(),
             Rule::field_type => param_type = parse_field_type(inner)?,
             Rule::decorator => {
                 if let Some(dec) = parse_decorator(inner)? {
@@ -284,6 +424,174 @@ fn parse_action_param(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action
     }
 
     Ok(ActionParam { name, param_type, decorators, location })
+}
+
+/// Parse process section
+fn parse_process_section(pair: pest::iterators::Pair<Rule>) -> CompileResult<ProcessSection> {
+    let mut derives = Vec::new();
+
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::derive_statements {
+            for stmt in inner.into_inner() {
+                if stmt.as_rule() == Rule::derive_statement {
+                    derives.push(parse_derive_statement(stmt)?);
+                }
+            }
+        }
+    }
+
+    Ok(ProcessSection { derives })
+}
+
+/// Parse derive statement
+fn parse_derive_statement(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveStatement> {
+    let location = get_location(&pair);
+    let mut name = String::new();
+    let mut value = DeriveValue::Literal(LiteralValue::String(String::new()));
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::identifier => {
+                if name.is_empty() {
+                    name = inner.as_str().to_string();
+                } else {
+                    value = DeriveValue::Identifier(inner.as_str().to_string());
+                }
+            }
+            Rule::derive_expr => {
+                value = parse_derive_expr(inner)?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(DeriveStatement { name, value, location })
+}
+
+/// Parse derive expression
+fn parse_derive_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::function_call => {
+                return parse_function_call(inner);
+            }
+            Rule::dotted_path => {
+                let path: Vec<String> = inner.into_inner()
+                    .filter(|p| p.as_rule() == Rule::path_segment)
+                    .map(|p| p.as_str().to_string())
+                    .collect();
+                return Ok(DeriveValue::FieldAccess { path });
+            }
+            Rule::literal => {
+                for lit_inner in inner.into_inner() {
+                    return Ok(DeriveValue::Literal(parse_literal_value(lit_inner)?));
+                }
+            }
+            Rule::identifier => {
+                return Ok(DeriveValue::Identifier(inner.as_str().to_string()));
+            }
+            _ => {}
+        }
+    }
+    Ok(DeriveValue::Literal(LiteralValue::String(String::new())))
+}
+
+/// Parse function call in derive
+fn parse_function_call(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
+    let mut name = String::new();
+    let mut args = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::identifier => {
+                name = inner.as_str().to_string();
+            }
+            Rule::function_args => {
+                for arg in inner.into_inner() {
+                    if arg.as_rule() == Rule::function_arg {
+                        args.push(parse_function_arg(arg)?);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(DeriveValue::FunctionCall { name, args })
+}
+
+/// Parse function argument
+fn parse_function_arg(pair: pest::iterators::Pair<Rule>) -> CompileResult<crate::ast::FunctionArg> {
+    use crate::ast::FunctionArg;
+    
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_name => {
+                return Ok(FunctionArg::TypeName(inner.as_str().to_string()));
+            }
+            Rule::dotted_path => {
+                let path: Vec<String> = inner.into_inner()
+                    .filter(|p| p.as_rule() == Rule::path_segment)
+                    .map(|p| p.as_str().to_string())
+                    .collect();
+                return Ok(FunctionArg::FieldAccess { path });
+            }
+            Rule::literal => {
+                for lit_inner in inner.into_inner() {
+                    return Ok(FunctionArg::Literal(parse_literal_value(lit_inner)?));
+                }
+            }
+            Rule::identifier => {
+                return Ok(FunctionArg::Identifier(inner.as_str().to_string()));
+            }
+            _ => {}
+        }
+    }
+    Ok(FunctionArg::Identifier(String::new()))
+}
+
+/// Parse literal value
+fn parse_literal_value(pair: pest::iterators::Pair<Rule>) -> CompileResult<LiteralValue> {
+    match pair.as_rule() {
+        Rule::string_literal => {
+            let s = pair.as_str();
+            Ok(LiteralValue::String(s[1..s.len()-1].to_string()))
+        }
+        Rule::number_literal => {
+            let value: f64 = pair.as_str().parse().unwrap_or(0.0);
+            Ok(LiteralValue::Number(value))
+        }
+        Rule::boolean_literal => {
+            Ok(LiteralValue::Boolean(pair.as_str() == "true"))
+        }
+        _ => Ok(LiteralValue::String(String::new())),
+    }
+}
+
+/// Parse output section
+fn parse_output_section(pair: pest::iterators::Pair<Rule>) -> CompileResult<OutputSection> {
+    let mut entity = String::new();
+    let mut fields = Vec::new();
+
+    for inner in pair.into_inner() {
+        if inner.as_rule() == Rule::type_projection {
+            for proj_inner in inner.into_inner() {
+                match proj_inner.as_rule() {
+                    Rule::type_name => entity = proj_inner.as_str().to_string(),
+                    Rule::projection_fields => {
+                        for field in proj_inner.into_inner() {
+                            if field.as_rule() == Rule::identifier {
+                                fields.push(field.as_str().to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    Ok(OutputSection { entity, fields })
 }
 
 /// Parse rule definition
@@ -315,6 +623,25 @@ fn parse_rule(pair: pest::iterators::Pair<Rule>) -> CompileResult<crate::ast::Ru
     }
 
     Ok(crate::ast::Rule { name, condition, consequence, location })
+}
+
+/// Parse policy definition
+fn parse_policy(pair: pest::iterators::Pair<Rule>) -> CompileResult<Policy> {
+    let location = get_location(&pair);
+    let mut name = String::new();
+    let mut subject = String::new();
+    let mut require = Expression::Literal(LiteralValue::Boolean(false));
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::policy_name => name = inner.as_str().to_string(),
+            Rule::subject_name => subject = inner.as_str().to_string(),
+            Rule::expression => require = parse_expression(inner)?,
+            _ => {}
+        }
+    }
+
+    Ok(Policy { name, subject, require, location })
 }
 
 /// Parse expression
@@ -560,39 +887,40 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_entity_with_enum() {
-        let source = "entity User:\n    status: active | inactive | suspended\n";
+    fn test_parse_entity_with_new_types() {
+        let source = "entity User:\n    id: uuid @primary\n    email: email @unique\n    created_at: datetime @auto\n";
         let result = parse_intent(source);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         let file = result.unwrap();
-        let field = &file.entities[0].fields[0];
-        match &field.field_type {
-            FieldType::Enum(values) => {
-                assert_eq!(values.len(), 3);
-                assert!(values.contains(&"active".to_string()));
-            }
-            _ => panic!("Expected enum type"),
-        }
+        assert_eq!(file.entities[0].fields[0].field_type, FieldType::Uuid);
+        assert_eq!(file.entities[0].fields[1].field_type, FieldType::Email);
     }
 
     #[test]
-    fn test_parse_action() {
-        let source = "action create_user:\n    name: string\n    age: number\n    @api POST /users\n    @returns User\n";
+    fn test_parse_entity_with_ref_and_list() {
+        let source = "entity Post:\n    id: uuid @primary\n    author: ref<User>\n    tags: list<string>\n";
+        let result = parse_intent(source);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+        let file = result.unwrap();
+        assert!(matches!(file.entities[0].fields[1].field_type, FieldType::Ref(_)));
+        assert!(matches!(file.entities[0].fields[2].field_type, FieldType::List(_)));
+    }
+
+    #[test]
+    fn test_parse_v01_action() {
+        let source = r#"@api POST /signup
+action signup:
+    input:
+        email: email
+        password: string @map(hashed_password, hash)
+    output: User(id, email)
+"#;
         let result = parse_intent(source);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
         let file = result.unwrap();
         assert_eq!(file.actions.len(), 1);
-        assert_eq!(file.actions[0].name, "create_user");
-        assert_eq!(file.actions[0].params.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_rule() {
-        let source = "rule ValidateAge:\n    when User.age < 18\n    then reject(\"Must be 18 or older\")\n";
-        let result = parse_intent(source);
-        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
-        let file = result.unwrap();
-        assert_eq!(file.rules.len(), 1);
-        assert_eq!(file.rules[0].name, "ValidateAge");
+        assert_eq!(file.actions[0].name, "signup");
+        assert!(file.actions[0].input.is_some());
+        assert!(file.actions[0].output.is_some());
     }
 }

@@ -1,6 +1,6 @@
 // Intent Compiler - AST Definitions
 // These types represent the parsed structure of Intent Definition Language files
-// v0.1 Spec Implementation
+//  Spec Implementation
 
 use serde::{Deserialize, Serialize};
 
@@ -33,30 +33,30 @@ pub struct Field {
     pub location: SourceLocation,
 }
 
-/// Supported field types in IDL (v0.1)
+/// Supported field types in IDL
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FieldType {
     String,
     Number,
     Boolean,
     DateTime,
-    Uuid,   // v0.1: UUID type
-    Email,  // v0.1: Email type with format validation
+    Uuid,   // : UUID type
+    Email,  // : Email type with format validation
     /// Enum type with possible values: status: active | inactive
     Enum(Vec<String>),
     /// Reference to another entity: author: User
     Reference(String),
-    /// v0.1 ref type: ref<User>
+    ///  ref type: ref<User>
     Ref(String),
     /// Array of a type: tags: [string]
     Array(Box<FieldType>),
-    /// v0.1 list type: list<string>
+    ///  list type: list<string>
     List(Box<FieldType>),
     /// Optional type: email: string?
     Optional(Box<FieldType>),
 }
 
-/// Field and action decorators (v0.1)
+/// Field and action decorators
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Decorator {
     /// @primary - marks field as primary key
@@ -71,19 +71,19 @@ pub enum Decorator {
     Index,
     /// @default(value) - sets default value
     Default(String),
-    /// @validate(min:, max:, pattern:) - validation constraints (v0.1)
+    /// @validate(min:, max:, pattern:) - validation constraints
     Validate(ValidationConstraints),
     /// @api METHOD /path - defines API endpoint
     Api { method: HttpMethod, path: String },
     /// @auth or @auth(Entity) or @auth(action(args)) - requires authentication
     Auth { name: Option<String>, args: Vec<String> },
-    /// @map(target, transform) - maps field with optional transform (v0.1)
+    /// @map(target, transform) - maps field with optional transform
     Map { target: String, transform: MapTransform },
     /// @policy(Name) - enforces a policy
     Policy(String),
 }
 
-/// Validation constraints for @validate decorator (v0.1)
+/// Validation constraints for @validate decorator
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ValidationConstraints {
     pub min: Option<f64>,
@@ -92,7 +92,7 @@ pub struct ValidationConstraints {
     pub required: Option<bool>,
 }
 
-/// Map transform types for @map decorator (v0.1)
+/// Map transform types for @map decorator
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MapTransform {
     None,
@@ -127,7 +127,7 @@ impl std::fmt::Display for HttpMethod {
     }
 }
 
-/// Action definition - represents an operation/endpoint (v0.1 structured)
+/// Action definition - represents an operation/endpoint ( structured)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Action {
     pub name: String,
@@ -142,19 +142,19 @@ pub struct Action {
     pub location: SourceLocation,
 }
 
-/// Input section for action (v0.1)
+/// Input section for action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputSection {
     pub fields: Vec<ActionParam>,
 }
 
-/// Process section for action (v0.1)
+/// Process section for action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSection {
     pub derives: Vec<DeriveStatement>,
 }
 
-/// Derive statement in process section (v0.1)
+/// Derive statement in process section
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeriveStatement {
     pub name: String,
@@ -180,7 +180,7 @@ pub enum FunctionArg {
     Literal(LiteralValue),
 }
 
-/// Output section for action (v0.1)
+/// Output section for action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputSection {
     pub entity: String,

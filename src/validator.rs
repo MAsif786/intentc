@@ -233,7 +233,7 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
     let mut has_api = false;
     let mut param_names = HashSet::new();
 
-    // Validate input fields (v0.1 structured syntax)
+    // Validate input fields ( structured syntax)
     if let Some(input) = &action.input {
         for param in &input.fields {
             if param_names.contains(&param.name) {
@@ -248,7 +248,7 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
         }
     }
 
-    // Validate output section (v0.1)
+    // Validate output section
     if let Some(output) = &action.output {
         if !ctx.entities.contains_key(&output.entity) {
             return Err(CompileError::validation_with_hint(
@@ -315,7 +315,7 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
 
     if !has_api {
         // Actions without @api are internal and don't generate routes
-        // For v0.1 we just allow them
+        // For  we just allow them
     }
 
     Ok(())

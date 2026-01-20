@@ -1,5 +1,5 @@
 // Intent Definition Language Grammar (PEG)
-// Parser grammar for .intent files - v0.1 Spec
+// Parser grammar for .intent files Spec
 
 // We DON'T use pest's implicit whitespace handling
 // because we need explicit indentation matching
@@ -40,13 +40,13 @@ field_def = {
 field_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // ============================================
-// Type System (v0.1)
+// Type System
 // ============================================
 field_type = { list_type | ref_type | array_type | optional_type | base_type }
 
 base_type = { enum_type | primitive_type | reference_type }
 
-// v0.1 primitive types: string, number, boolean, datetime, uuid, email
+//  primitive types: string, number, boolean, datetime, uuid, email
 primitive_type = @{ "string" | "number" | "boolean" | "datetime" | "uuid" | "email" }
 
 enum_type = { enum_value ~ (ws* ~ "|" ~ ws* ~ enum_value)+ }
@@ -59,13 +59,13 @@ array_type = { "[" ~ ws* ~ base_type ~ ws* ~ "]" }
 
 optional_type = { base_type ~ "?" }
 
-// v0.1 composite types: ref<Entity>, list<T>
+//  composite types: ref<Entity>, list<T>
 ref_type = { "ref" ~ "<" ~ ws* ~ type_name ~ ws* ~ ">" }
 
 list_type = { "list" ~ "<" ~ ws* ~ field_type ~ ws* ~ ">" }
 
 // ============================================
-// Action Definition (v0.1 structured syntax)
+// Action Definition ( structured syntax)
 // ============================================
 full_action_def = {
     pre_action_decorators ~
@@ -144,7 +144,7 @@ when_clause = { "when" ~ ws+ ~ expression }
 then_clause = { "then" ~ ws+ ~ consequence }
 
 // ============================================
-// Policy Definition (v0.1)
+// Policy Definition
 // ============================================
 policy_def = {
     "policy" ~ ws+ ~ policy_name ~ ":" ~ nl ~
@@ -162,7 +162,7 @@ policy_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 subject_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // ============================================
-// Decorators (v0.1)
+// Decorators
 // ============================================
 decorator = { "@" ~ decorator_type }
 
@@ -192,11 +192,11 @@ api_path = @{ "/" ~ (ASCII_ALPHANUMERIC | "/" | "_" | "-" | "{" | "}")* }
 default_decorator = { "default" ~ "(" ~ ws* ~ default_value ~ ws* ~ ")" }
 default_value = { string_literal | number_literal | boolean_literal | identifier }
 
-// @map(target_field, transform) - v0.1 with transform
+// @map(target_field, transform) with transform
 map_decorator = { "map" ~ "(" ~ ws* ~ identifier ~ ws* ~ ("," ~ ws* ~ transform_type ~ ws*)? ~ ")" }
 transform_type = @{ "none" | "hash" }
 
-// @validate(min: 1, max: 100, pattern: "...") - v0.1
+// @validate(min: 1, max: 100, pattern: "...")
 validate_decorator = { "validate" ~ "(" ~ ws* ~ validate_args ~ ws* ~ ")" }
 validate_args = { validate_arg ~ (ws* ~ "," ~ ws* ~ validate_arg)* }
 validate_arg = { validate_key ~ ws* ~ ":" ~ ws* ~ validate_value }

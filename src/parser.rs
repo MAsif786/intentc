@@ -1,6 +1,6 @@
 // Intent Compiler - Parser
 // Transforms .intent files into typed AST
-// v0.1 Spec Implementation
+//  Spec Implementation
 
 use pest::Parser;
 use pest_derive::Parser;
@@ -121,7 +121,7 @@ fn parse_field(pair: pest::iterators::Pair<Rule>) -> CompileResult<Field> {
     Ok(Field { name, field_type, decorators, location })
 }
 
-/// Parse field type (v0.1 with ref<T> and list<T>)
+/// Parse field type ( with ref<T> and list<T>)
 fn parse_field_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -160,7 +160,7 @@ fn parse_field_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldTyp
     Ok(FieldType::String)
 }
 
-/// Parse base type (v0.1 with uuid, email)
+/// Parse base type ( with uuid, email)
 fn parse_base_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
@@ -192,7 +192,7 @@ fn parse_base_type(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldType
     Ok(FieldType::String)
 }
 
-/// Parse decorator (v0.1 with @validate, @auto, updated @map)
+/// Parse decorator ( with @validate, @auto, updated @map)
 fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<Decorator>> {
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::decorator_type {
@@ -338,7 +338,7 @@ fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<De
     Ok(None)
 }
 
-/// Parse action definition (v0.1 structured syntax)
+/// Parse action definition ( structured syntax)
 fn parse_action(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action> {
     let location = get_location(&pair);
     let mut name = String::new();

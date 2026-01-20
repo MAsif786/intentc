@@ -7,7 +7,6 @@ mod api;
 mod rules;
 mod migrations;
 mod tests;
-mod auth;
 mod policies;
 
 use std::fs;
@@ -97,7 +96,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from db.models import Base
 from db.database import engine
-from api import routes, auth
+from api import routes
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -120,7 +119,6 @@ app.add_middleware(
 
 # Include routes
 app.include_router(routes.router)
-app.include_router(auth.router, tags=["auth"])
 
 
 @app.get("/")
@@ -269,10 +267,6 @@ impl CodeGenerator for PythonGenerator {
         // Generate FastAPI routes
         let api_result = api::generate_routes(ast, output_dir)?;
         result.merge(api_result);
-
-        // Generate authentication utils
-        let auth_result = auth::generate_auth_utils(ast, output_dir)?;
-        result.merge(auth_result);
 
         // Generate business rules
         let rules_result = rules::generate_rules(ast, output_dir)?;

@@ -29,9 +29,6 @@ pub enum CompileError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("Template error: {0}")]
-    TemplateError(String),
-
     #[error("Multiple errors occurred")]
     MultipleErrors(Vec<CompileError>),
 }
@@ -89,10 +86,6 @@ impl CompileError {
         }
     }
 
-    /// Create a template error
-    pub fn template(message: impl Into<String>) -> Self {
-        CompileError::TemplateError(message.into())
-    }
 
     /// Format error for terminal output with colors
     pub fn format_colored(&self, source: Option<&str>) -> String {
@@ -165,13 +158,6 @@ impl CompileError {
                     e.to_string().white()
                 )
             }
-            CompileError::TemplateError(msg) => {
-                format!(
-                    "{}: {}\n",
-                    "template error".red().bold(),
-                    msg.white()
-                )
-            }
             CompileError::MultipleErrors(errors) => {
                 let mut output = String::new();
                 for (i, err) in errors.iter().enumerate() {
@@ -226,14 +212,6 @@ pub struct Warning {
 }
 
 impl Warning {
-    pub fn new(message: impl Into<String>, location: SourceLocation) -> Self {
-        Self {
-            message: message.into(),
-            location,
-            hint: None,
-        }
-    }
-
     pub fn with_hint(message: impl Into<String>, location: SourceLocation, hint: impl Into<String>) -> Self {
         Self {
             message: message.into(),

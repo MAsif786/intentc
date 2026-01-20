@@ -35,6 +35,7 @@ impl std::fmt::Display for TargetLanguage {
 }
 
 /// Code generator trait - implement for each target language
+#[allow(dead_code)]
 pub trait CodeGenerator {
     /// Generate code from an intent file
     fn generate(&self, ast: &IntentFile, output_dir: &Path) -> CompileResult<GenerationResult>;
@@ -67,9 +68,6 @@ impl GenerationResult {
         self.lines_generated += lines;
     }
 
-    pub fn add_warning(&mut self, warning: impl Into<String>) {
-        self.warnings.push(warning.into());
-    }
 
     pub fn merge(&mut self, other: GenerationResult) {
         self.files_created.extend(other.files_created);

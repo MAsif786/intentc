@@ -4,9 +4,6 @@ use crate::error::CompileResult;
 use std::fs;
 use std::path::Path;
 
-use crate::ast::DeriveValue;
-use crate::ast::LiteralValue;
-
 pub fn generate_policies(ast: &IntentFile, output_dir: &Path) -> CompileResult<GenerationResult> {
     let mut result = GenerationResult::new();
     let mut content = String::new();
@@ -38,7 +35,7 @@ pub fn generate_policies(ast: &IntentFile, output_dir: &Path) -> CompileResult<G
     Ok(result)
 }
 
-fn generate_policy_function(policy: &crate::ast::Policy, ast: &IntentFile, entity_context: Option<&str>) -> String {
+fn generate_policy_function(policy: &crate::ast::Policy, _ast: &IntentFile, entity_context: Option<&str>) -> String {
     let mut content = String::new();
     let func_name = if let Some(entity) = entity_context {
         format!("check_{}_{}", entity, policy.name)

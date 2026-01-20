@@ -5,8 +5,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::codegen::TargetLanguage;
-
 /// Intent Compiler - Transform IDL into production-ready backend code
 #[derive(Parser, Debug)]
 #[command(name = "intentc")]
@@ -66,9 +64,4 @@ impl Cli {
     pub fn parse_args() -> Self {
         Cli::parse()
     }
-}
-
-/// Get target language from string
-pub fn parse_target_language(target: &str) -> Result<TargetLanguage, String> {
-    target.parse()
 }

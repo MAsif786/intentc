@@ -341,20 +341,6 @@ impl IntentFile {
         self.entities.iter().find(|e| e.name == name)
     }
 
-    /// Find an action by name
-    pub fn find_action(&self, name: &str) -> Option<&Action> {
-        self.actions.iter().find(|a| a.name == name)
-    }
-
-    /// Get all entity names for validation
-    pub fn entity_names(&self) -> Vec<&str> {
-        self.entities.iter().map(|e| e.name.as_str()).collect()
-    }
-
-    /// Get all action names for validation
-    pub fn action_names(&self) -> Vec<&str> {
-        self.actions.iter().map(|a| a.name.as_str()).collect()
-    }
 }
 
 impl Default for IntentFile {
@@ -382,42 +368,4 @@ impl FieldType {
         }
     }
 
-    /// Convert to SQLAlchemy column type
-    pub fn to_sqlalchemy_type(&self) -> String {
-        match self {
-            FieldType::String => "String".to_string(),
-            FieldType::Number => "Float".to_string(),
-            FieldType::Boolean => "Boolean".to_string(),
-            FieldType::DateTime => "DateTime".to_string(),
-            FieldType::Uuid => "String".to_string(),  // UUID stored as string
-            FieldType::Email => "String".to_string(), // Email stored as string
-            FieldType::Enum(values) => format!("Enum({})", values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", ")),
-            FieldType::Reference(name) => format!("ForeignKey(\"{}.id\")", name.to_lowercase()),
-            FieldType::Ref(name) => format!("ForeignKey(\"{}.id\")", name.to_lowercase()),
-            FieldType::Array(_) => "JSON".to_string(), // Arrays stored as JSON
-            FieldType::List(_) => "JSON".to_string(),  // Lists stored as JSON
-            FieldType::Optional(inner) => inner.to_sqlalchemy_type(),
-        }
-    }
-}
-
-impl Action {
-    /// Get input fields (for backward compatibility)
-    pub fn get_input_fields(&self) -> Vec<&ActionParam> {
-        self.input.as_ref()
-            .map(|i| i.fields.iter().collect())
-            .unwrap_or_default()
-    }
-    
-    /// Get output entity name
-    pub fn get_output_entity(&self) -> Option<&str> {
-        self.output.as_ref().map(|o| o.entity.as_str())
-    }
-    
-    /// Get output field projections
-    pub fn get_output_fields(&self) -> Vec<&str> {
-        self.output.as_ref()
-            .map(|o| o.fields.iter().map(|s| s.as_str()).collect())
-            .unwrap_or_default()
-    }
 }

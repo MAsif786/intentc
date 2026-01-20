@@ -659,7 +659,7 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
             };
 
 
-            if let Some(p) = policy {
+            if let Some(_p) = policy {
                  let func_name = if name.contains('.') {
                     let parts: Vec<&str> = name.split('.').collect();
                     format!("check_{}_{}", parts[0], parts[1])

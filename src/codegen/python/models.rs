@@ -20,6 +20,14 @@ pub fn generate_models(ast: &IntentFile, output_dir: &Path) -> CompileResult<Gen
         result.add_file(format!("models/{}", filename), lines);
     }
 
+    // Generate request models for actions
+    let (req_content, req_lines) = generate_action_requests(ast)?;
+    if req_lines > 0 {
+        let req_path = output_dir.join("models/requests.py");
+        fs::write(&req_path, &req_content)?;
+        result.add_file("models/requests.py", req_lines);
+    }
+
     // Generate models/__init__.py with all exports
     let init_content = generate_models_init(ast);
     let init_path = output_dir.join("models/__init__.py");
@@ -213,6 +221,12 @@ fn generate_models_init(ast: &IntentFile) -> String {
         ));
     }
 
+    // Import request models
+    let requests_exist = ast.actions.iter().any(|a| !a.params.is_empty());
+    if requests_exist {
+        content.push_str("from .requests import *\n");
+    }
+
     content.push_str("\n__all__ = [\n");
     for entity in &ast.entities {
         content.push_str(&format!("    \"{}\",\n", entity.name));
@@ -224,8 +238,43 @@ fn generate_models_init(ast: &IntentFile) -> String {
     content
 }
 
+/// Generate request models for actions
+fn generate_action_requests(ast: &IntentFile) -> CompileResult<(String, usize)> {
+    let mut content = String::new();
+    let mut count = 0;
+
+    content.push_str("# Intent Compiler Generated Request Models\n");
+    content.push_str("from typing import Optional, List, Literal\n");
+    content.push_str("from datetime import datetime\n");
+    content.push_str("from pydantic import BaseModel, Field\n\n\n");
+
+    for action in &ast.actions {
+        if action.params.is_empty() {
+            continue;
+        }
+
+        count += 1;
+        let model_name = format!("{}Request", capitalize(&action.name));
+        content.push_str(&format!("class {}(BaseModel):\n", model_name));
+        content.push_str("    model_config = {\"extra\": \"forbid\"}\n");
+        
+        for param in &action.params {
+             let python_type = field_type_to_python(&param.param_type);
+             content.push_str(&format!("    {}: {}\n", param.name, python_type));
+        }
+        content.push_str("\n\n");
+    }
+
+    if count == 0 {
+        return Ok((String::new(), 0));
+    }
+
+    let lines = content.lines().count();
+    Ok((content, lines))
+}
+
 /// Capitalize first letter
-fn capitalize(s: &str) -> String {
+pub fn capitalize(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
         None => String::new(),

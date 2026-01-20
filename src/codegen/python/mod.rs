@@ -7,6 +7,7 @@ mod api;
 mod rules;
 mod migrations;
 mod tests;
+mod auth;
 
 use std::fs;
 use std::path::Path;
@@ -36,6 +37,7 @@ impl PythonGenerator {
             "db/migrations",
             "db/migrations/versions",
             "api",
+            "core",
             "logic",
             "tests",
         ];
@@ -55,6 +57,7 @@ impl PythonGenerator {
 # Web framework
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
 
 # Database
 sqlalchemy>=2.0.0
@@ -66,6 +69,8 @@ pydantic-settings>=2.1.0
 
 # Utilities
 python-dotenv>=1.0.0
+pyjwt>=2.8.0
+passlib[bcrypt]>=1.7.4
 
 # Testing
 pytest>=7.4.0
@@ -90,7 +95,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from db.models import Base
 from db.database import engine
-from api import routes
+from api import routes, auth
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -113,6 +118,7 @@ app.add_middleware(
 
 # Include routes
 app.include_router(routes.router)
+app.include_router(auth.router, tags=["auth"])
 
 
 @app.get("/")
@@ -159,6 +165,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./app.db"
+    secret_key: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
     
     class Config:
         env_file = ".env"
@@ -258,6 +267,10 @@ impl CodeGenerator for PythonGenerator {
         // Generate FastAPI routes
         let api_result = api::generate_routes(ast, output_dir)?;
         result.merge(api_result);
+
+        // Generate authentication utils
+        let auth_result = auth::generate_auth_utils(ast, output_dir)?;
+        result.merge(auth_result);
 
         // Generate business rules
         let rules_result = rules::generate_rules(ast, output_dir)?;

@@ -92,9 +92,7 @@ httpx>=0.25.0
 
     /// Generate main.py entry point
     fn generate_main(&self, _ast: &IntentFile, output_dir: &Path) -> CompileResult<usize> {
-        let mut content = String::new();
-        
-        content.push_str(r#"# Intent Compiler Generated Entry Point
+        let template = r#"# Intent Compiler Generated Entry Point (vVERSION)
 # Generated automatically - do not edit
 
 from fastapi import FastAPI
@@ -111,7 +109,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="Intent Compiler Generated API",
     description="API generated from Intent Definition Language",
-    version="0.1.0",
+    version="VERSION",
 )
 
 # Configure CORS
@@ -151,7 +149,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     uvicorn.run(app, host=args.host, port=args.port)
-"#);
+"#;
+        let content = template.replace("VERSION", crate::codegen::VERSION);
 
         let path = output_dir.join("main.py");
         let lines = content.lines().count();

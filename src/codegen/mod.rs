@@ -3,6 +3,8 @@
 
 pub mod python;
 
+pub const VERSION: &str = "0.2.0";
+
 use std::path::Path;
 
 use crate::ast::IntentFile;

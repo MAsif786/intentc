@@ -9,6 +9,8 @@ mod migrations;
 mod tests;
 mod policies;
 mod repositories;
+mod services;
+mod controllers;
 
 use std::fs;
 use std::path::Path;
@@ -41,6 +43,8 @@ impl PythonGenerator {
             "core",
             "logic",
             "repositories",
+            "services",
+            "controllers",
             "tests",
         ];
 
@@ -269,6 +273,14 @@ impl CodeGenerator for PythonGenerator {
         // Generate repositories
         let repos_result = repositories::generate_repositories(ast, output_dir)?;
         result.merge(repos_result);
+
+        // Generate services
+        let services_result = services::generate_services(ast, output_dir)?;
+        result.merge(services_result);
+
+        // Generate controllers
+        let controllers_result = controllers::generate_controllers(ast, output_dir)?;
+        result.merge(controllers_result);
 
         // Generate FastAPI routes
         let api_result = api::generate_routes(ast, output_dir)?;

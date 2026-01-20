@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::codegen::TargetLanguage;
+
 /// Intent Compiler - Transform IDL into production-ready backend code
 #[derive(Parser, Debug)]
 #[command(name = "intentc")]
@@ -32,9 +34,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "./output")]
         output: PathBuf,
 
-        /// Target language (python)
-        #[arg(short, long, default_value = "python")]
-        target: String,
+        /// Target language (python) - optional, defaults to python
+        #[arg(short, long)]
+        target: Option<String>,
 
         /// Generate tests
         #[arg(long, default_value = "true")]
@@ -63,5 +65,13 @@ impl Cli {
     /// Parse command line arguments
     pub fn parse_args() -> Self {
         Cli::parse()
+    }
+}
+
+/// Get target language from string, defaults to Python
+pub fn parse_target_language(target: Option<&str>) -> Result<TargetLanguage, String> {
+    match target.unwrap_or("python") {
+        "python" | "py" => Ok(TargetLanguage::Python),
+        other => Err(format!("Unknown target language: {}. Supported: python", other)),
     }
 }

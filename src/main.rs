@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use colored::Colorize;
 
 use cli::{Cli, Commands};
-use codegen::{create_generator, TargetLanguage};
+use codegen::create_generator;
 use error::CompileResult;
 
 fn main() -> ExitCode {
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 
     let result = match cli.command {
         Commands::Compile { input, output, target, tests: _ } => {
-            compile_intent(&input, &output, &target, cli.verbose)
+            compile_intent(&input, &output, target.as_deref(), cli.verbose)
         }
         Commands::Check { input } => {
             check_intent(&input, cli.verbose)
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
 }
 
 /// Compile an intent file to target language
-fn compile_intent(input: &Path, output: &Path, target: &str, verbose: bool) -> CompileResult<()> {
+fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bool) -> CompileResult<()> {
     if verbose {
         println!("{} {} → {}", "Compiling".green().bold(), input.display(), output.display());
     }
@@ -81,9 +81,9 @@ fn compile_intent(input: &Path, output: &Path, target: &str, verbose: bool) -> C
         println!("    {} Validation passed", "✓".green());
     }
 
-    // Parse target language
-    let target_lang: TargetLanguage = target.parse()
-        .map_err(|e: String| error::CompileError::codegen(e))?;
+    // Parse target language (defaults to python)
+    let target_lang = cli::parse_target_language(target)
+        .map_err(|e| error::CompileError::codegen(e))?;
 
     // Generate code
     if verbose {

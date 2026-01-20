@@ -450,7 +450,7 @@ fn generate_action_function(action: &Action, _ast: &IntentFile) -> CompileResult
                         }
                     }
                     
-                    // Process section derivations (v0.1) - for create actions
+                    // Process section derivations - for create actions
                     if let Some(process) = &action.process {
                         for derive in &process.derives {
                             let val_expr = derive_value_to_python(&derive.value);

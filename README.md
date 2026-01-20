@@ -4,10 +4,11 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Version](https://img.shields.io/badge/version-v0.2-green)](https://github.com/MAsif786/intentc/releases/tag/v0.2)
 
 ## What is Intent Compiler?
 
-Intent Compiler is a **code generation tool** that transforms a simple, human-readable Intent Definition Language (IDL) into a complete Python backend application. Write 25 lines of intent, get 500+ lines of production-ready code.
+Intent Compiler is a **code generation tool** that transforms a simple, human-readable Intent Definition Language (IDL) into a complete Python backend application with clean layered architecture. Write 25 lines of intent, get 1800+ lines of production-ready code.
 
 ### The Problem
 
@@ -217,7 +218,33 @@ action delete_user:
 |-----------|-------------|
 | `@api METHOD /path` | HTTP endpoint (GET, POST, PUT, PATCH, DELETE) |
 | `@returns EntityName` | Response type |
-| `@auth` | Requires authentication |
+| `@auth` | Requires JWT authentication |
+| `@map(field -> target, transform)` | Transform input (e.g., hash passwords) |
+
+### Process Section (v0.2)
+
+Define complex logic with built-in functions:
+
+```intent
+@api POST /login
+action login:
+    input:
+        email: email
+        password: string
+    process:
+        derive user = find(User, email)
+        derive valid = verify_hash(password, user.password_hash)
+        derive token = create_jwt(user.email)
+    output: User(id, token)
+```
+
+#### Built-in Functions
+
+| Function | Description |
+|----------|-------------|
+| `find(Entity, field1, field2, ...)` | Query entity by fields |
+| `verify_hash(input, hash_field)` | Verify password hash |
+| `create_jwt(subject)` | Generate JWT token |
 
 ### Rules
 
@@ -259,25 +286,38 @@ output/
 ├── requirements.txt     # Python dependencies
 ├── .env.example         # Environment template
 ├── api/
-│   ├── __init__.py
 │   └── routes.py        # API endpoints
+├── controllers/         # Request handlers (v0.2)
+│   └── <entity>_controller.py
+├── services/            # Business logic (v0.2)
+│   └── <entity>_service.py
+├── repositories/        # Data access (v0.2)
+│   ├── base.py          # Generic CRUD
+│   └── <entity>_repository.py
 ├── db/
-│   ├── __init__.py
 │   ├── database.py      # SQLAlchemy setup
 │   ├── models.py        # ORM models
 │   └── migrations/      # Alembic migrations
 ├── models/
-│   ├── __init__.py
 │   └── <entity>.py      # Pydantic models
+├── core/
+│   └── security.py      # JWT & password hashing
 ├── logic/
-│   ├── __init__.py
-│   └── rules.py         # Business rules
+│   ├── rules.py         # Business rules
+│   └── policies.py      # Access policies
 └── tests/
-    ├── __init__.py
     ├── conftest.py      # pytest fixtures
     ├── test_models.py   # Model tests
     └── test_api.py      # API tests
 ```
+
+### Layered Architecture (v0.2)
+
+| Layer | Responsibility |
+|-------|----------------|
+| **Controllers** | Handle HTTP requests, call services |
+| **Services** | Business logic, validation, transformations |
+| **Repositories** | Database CRUD operations |
 
 ## Generated Technology Stack
 
@@ -384,10 +424,14 @@ src/
 
 ## Roadmap
 
+- [x] JWT Authentication (`@auth`)
+- [x] Password hashing (`@map` with hash transform)
+- [x] Layered architecture (Repository/Service/Controller)
+- [x] DSL-based login flow (`find`, `verify_hash`, `create_jwt`)
+- [x] Build time logging
 - [ ] TypeScript/Node.js target
 - [ ] Go target
 - [ ] GraphQL support
-- [ ] Authentication/authorization
 - [ ] OpenAPI export
 - [ ] VS Code extension
 - [ ] Language server (LSP)

@@ -172,8 +172,16 @@ fn parse_decorator(pair: pest::iterators::Pair<Rule>) -> CompileResult<Option<De
                             "optional" => Decorator::Optional,
                             "auth" => Decorator::Auth,
                             "index" => Decorator::Index,
+                            "hash" => Decorator::Hash,
                             _ => return Ok(None),
                         }));
+                    }
+                    Rule::map_decorator => {
+                        for map_inner in dec_inner.into_inner() {
+                            if map_inner.as_rule() == Rule::identifier {
+                                return Ok(Some(Decorator::Map(map_inner.as_str().to_string())));
+                            }
+                        }
                     }
                     Rule::api_decorator => {
                         let mut method = HttpMethod::Get;
@@ -260,16 +268,22 @@ fn parse_action_param(pair: pest::iterators::Pair<Rule>) -> CompileResult<Action
     let location = get_location(&pair);
     let mut name = String::new();
     let mut param_type = FieldType::String;
+    let mut decorators = Vec::new();
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::param_name => name = inner.as_str().to_string(),
             Rule::field_type => param_type = parse_field_type(inner)?,
+            Rule::decorator => {
+                if let Some(dec) = parse_decorator(inner)? {
+                    decorators.push(dec);
+                }
+            }
             _ => {}
         }
     }
 
-    Ok(ActionParam { name, param_type, location })
+    Ok(ActionParam { name, param_type, decorators, location })
 }
 
 /// Parse rule definition

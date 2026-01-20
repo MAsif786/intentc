@@ -66,6 +66,10 @@ pub enum Decorator {
     Auth,
     /// @index - creates database index
     Index,
+    /// @hash - hashes the value (e.g. password)
+    Hash,
+    /// @map(name) - maps field to another name
+    Map(String),
 }
 
 /// HTTP methods for API decorators
@@ -104,6 +108,7 @@ pub struct Action {
 pub struct ActionParam {
     pub name: String,
     pub param_type: FieldType,
+    pub decorators: Vec<Decorator>,
     pub location: SourceLocation,
 }
 

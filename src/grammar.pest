@@ -68,7 +68,7 @@ action_lines = { action_line* }
 action_line = { indent ~ (action_param | decorator) ~ nl }
 
 action_param = {
-    param_name ~ ":" ~ ws* ~ field_type
+    param_name ~ ":" ~ ws* ~ field_type ~ (ws+ ~ decorator)*
 }
 
 param_name = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
@@ -93,10 +93,10 @@ then_clause = { "then" ~ ws+ ~ consequence }
 decorator = { "@" ~ decorator_type }
 
 decorator_type = {
-    api_decorator | returns_decorator | default_decorator | simple_decorator
+    api_decorator | returns_decorator | default_decorator | map_decorator | simple_decorator
 }
 
-simple_decorator = @{ "primary" | "unique" | "optional" | "auth" | "index" }
+simple_decorator = @{ "primary" | "unique" | "optional" | "auth" | "index" | "hash" }
 
 api_decorator = { "api" ~ ws+ ~ http_method ~ ws+ ~ api_path }
 http_method = @{ "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }
@@ -107,6 +107,8 @@ type_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 
 default_decorator = { "default" ~ "(" ~ ws* ~ default_value ~ ws* ~ ")" }
 default_value = { identifier | string_literal | number_literal }
+
+map_decorator = { "map" ~ "(" ~ ws* ~ identifier ~ ws* ~ ")" }
 
 // ============================================
 // Expressions

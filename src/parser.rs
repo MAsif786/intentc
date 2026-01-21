@@ -468,12 +468,18 @@ fn parse_derive_statement(pair: pest::iterators::Pair<Rule>) -> CompileResult<De
     Ok(DeriveStatement { name, value, location })
 }
 
-/// Parse derive expression
+/// Parse derive expression (v0.3)
 fn parse_derive_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::function_call => {
-                return parse_function_call(inner);
+            Rule::compute_expr => {
+                return parse_compute_expr(inner);
+            }
+            Rule::select_expr => {
+                return parse_select_expr(inner);
+            }
+            Rule::system_expr => {
+                return parse_system_expr(inner);
             }
             Rule::dotted_path => {
                 let path: Vec<String> = inner.into_inner()
@@ -496,15 +502,15 @@ fn parse_derive_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveV
     Ok(DeriveValue::Literal(LiteralValue::String(String::new())))
 }
 
-/// Parse function call in derive
-fn parse_function_call(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
-    let mut name = String::new();
+/// Parse compute expression: compute function_name(args)
+fn parse_compute_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
+    let mut function = String::new();
     let mut args = Vec::new();
 
     for inner in pair.into_inner() {
         match inner.as_rule() {
             Rule::identifier => {
-                name = inner.as_str().to_string();
+                function = inner.as_str().to_string();
             }
             Rule::function_args => {
                 for arg in inner.into_inner() {
@@ -517,7 +523,122 @@ fn parse_function_call(pair: pest::iterators::Pair<Rule>) -> CompileResult<Deriv
         }
     }
 
-    Ok(DeriveValue::FunctionCall { name, args })
+    Ok(DeriveValue::Compute { function, args })
+}
+
+/// Parse select expression: select Entity where predicate
+fn parse_select_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
+    let mut entity = String::new();
+    let mut predicate = Predicate {
+        field: FieldReference::InputField(String::new()),
+        operator: CompareOp::Equal,
+        value: FieldReference::InputField(String::new()),
+    };
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_name => {
+                entity = inner.as_str().to_string();
+            }
+            Rule::predicate => {
+                predicate = parse_predicate(inner)?;
+            }
+            _ => {}
+        }
+    }
+
+   Ok(DeriveValue::Select { entity, predicate })
+}
+
+/// Parse system call expression: system namespace.capability(args)
+fn parse_system_expr(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeriveValue> {
+    let mut namespace = String::new();
+    let mut capability = String::new();
+    let mut args = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::namespace => {
+                namespace = inner.as_str().to_string();
+            }
+            Rule::identifier => {
+                capability = inner.as_str().to_string();
+            }
+            Rule::function_args => {
+                for arg in inner.into_inner() {
+                    if arg.as_rule() == Rule::function_arg {
+                        args.push(parse_function_arg(arg)?);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(DeriveValue::SystemCall { namespace, capability, args })
+}
+
+/// Parse predicate: field_ref op field_ref
+fn parse_predicate(pair: pest::iterators::Pair<Rule>) -> CompileResult<Predicate> {
+    let mut items: Vec<pest::iterators::Pair<Rule>> = pair.into_inner().collect();
+    
+    if items.len() < 3 {
+        return Err(CompileError::parse("Invalid predicate: needs field operator field", 0, 0));
+    }
+
+    let left = parse_field_ref(items.remove(0))?;
+    let op_str = items.remove(0).as_str();
+    let right = parse_field_ref(items.remove(0))?;
+
+    let operator = match op_str {
+        "==" => CompareOp::Equal,
+        "!=" => CompareOp::NotEqual,
+        "<" => CompareOp::Less,
+        ">" => CompareOp::Greater,
+        _ => return Err(CompileError::parse(format!("Unknown operator: {}", op_str), 0, 0)),
+    };
+
+    Ok(Predicate { field: left, operator, value: right })
+}
+
+/// Parse field reference for predicates
+fn parse_field_ref(pair: pest::iterators::Pair<Rule>) -> CompileResult<FieldReference> {
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::dotted_path => {
+                let path: Vec<String> = inner.into_inner()
+                    .filter(|p| p.as_rule() == Rule::path_segment)
+                    .map(|p| p.as_str().to_string())
+                    .collect();
+                
+                // Check if this is input.field reference
+                if path.len() == 2 && path[0] == "input" {
+                    return Ok(FieldReference::InputField(path[1].clone()));
+                }
+                // Check if this is a derived field reference (name.field)
+                else if path.len() == 2 {
+                    return Ok(FieldReference::DerivedField {
+                        name: path[0].clone(),
+                        field: path[1].clone(),
+                    });
+                }
+                // Single identifier
+                else if path.len() == 1 {
+                    return Ok(FieldReference::InputField(path[0].clone()));
+                }
+            }
+            Rule::identifier => {
+                return Ok(FieldReference::InputField(inner.as_str().to_string()));
+            }
+            Rule::literal => {
+                for lit_inner in inner.into_inner() {
+                    return Ok(FieldReference::Literal(parse_literal_value(lit_inner)?));
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(CompileError::parse("Invalid field reference", 0, 0))
 }
 
 /// Parse function argument

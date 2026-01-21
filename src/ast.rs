@@ -162,13 +162,21 @@ pub struct DeriveStatement {
     pub location: SourceLocation,
 }
 
-/// Value for derive statement
+/// Value for derive statement (v0.3)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeriveValue {
+    /// Literal value: derive status = "active"
     Literal(LiteralValue),
+    /// Field access: derive email_norm = input.email
     FieldAccess { path: Vec<String> },
+    /// Identifier: derive x = y
     Identifier(String),
-    FunctionCall { name: String, args: Vec<FunctionArg> },
+    /// Compute expression: derive valid = compute verify_hash(password, user.password_hash)
+    Compute { function: String, args: Vec<FunctionArg> },
+    /// Select expression: derive user = select User where email == input.email
+    Select { entity: String, predicate: Predicate },
+    /// System call: derive token = system jwt.create(user.email)
+    SystemCall { namespace: String, capability: String, args: Vec<FunctionArg> },
 }
 
 /// Argument for function call in derive
@@ -178,6 +186,34 @@ pub enum FunctionArg {
     Identifier(String),
     FieldAccess { path: Vec<String> },
     Literal(LiteralValue),
+}
+
+/// Predicate for select expressions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Predicate {
+    pub field: FieldReference,
+    pub operator: CompareOp,
+    pub value: FieldReference,
+}
+
+/// Field reference in predicates and expressions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FieldReference {
+    /// Reference to input field: input.email or just email
+    InputField(String),
+    /// Reference to derived field: user.email
+    DerivedField { name: String, field: String },
+    /// Literal value in comparison
+    Literal(LiteralValue),
+}
+
+/// Comparison operators for predicates
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CompareOp {
+    Equal,      // ==
+    NotEqual,   // !=
+    Less,       // <
+    Greater,    // >
 }
 
 /// Output section for action

@@ -109,11 +109,25 @@ derive_statement = {
     indent ~ indent ~ "derive" ~ ws+ ~ identifier ~ ws* ~ "=" ~ ws* ~ derive_expr ~ nl 
 }
 
-// Derive expression: function call, dotted path, literal, or identifier
-derive_expr = { function_call | dotted_path | literal | identifier }
+// Derive expression: compute, select, system call, dotted path, literal, or identifier
+derive_expr = { compute_expr | select_expr | system_expr | dotted_path | literal | identifier }
 
-// Function call: find(User, email, status) or create_jwt(user.email)
-function_call = { identifier ~ "(" ~ ws* ~ function_args? ~ ws* ~ ")" }
+// Compute expression: compute function_name(args)
+compute_expr = { "compute" ~ ws+ ~ identifier ~ "(" ~ ws* ~ function_args? ~ ws* ~ ")" }
+
+// Select expression: select Entity where predicate
+select_expr = { "select" ~ ws+ ~ type_name ~ ws+ ~ "where" ~ ws+ ~ predicate }
+
+// System call expression: system namespace.capability(args)
+system_expr = { "system" ~ ws+ ~ namespace ~ "." ~ identifier ~ "(" ~ ws* ~ function_args? ~ ws* ~ ")" }
+namespace = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Predicate for select: derive_field_ref op derive_field_ref
+predicate = { derive_field_ref ~ ws* ~ compare_op ~ ws* ~ derive_field_ref }
+derive_field_ref = { dotted_path | literal | identifier }
+compare_op = @{ "==" | "!=" | "<" | ">" }
+
+// Function arguments (used by compute and system)
 function_args = { function_arg ~ (ws* ~ "," ~ ws* ~ function_arg)* }
 function_arg = { dotted_path | type_name | literal | identifier }
 

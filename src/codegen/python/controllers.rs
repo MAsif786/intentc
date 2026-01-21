@@ -132,7 +132,7 @@ fn generate_action_controller_method(action: &Action, entity_name: &str) -> Stri
     // Check return type based on action
     let has_find = action.process.as_ref().map(|p| {
         p.derives.iter().any(|d| {
-            matches!(&d.value, crate::ast::DeriveValue::FunctionCall { name, .. } if name == "find")
+            matches!(&d.value, crate::ast::DeriveValue::Select { .. })
         })
     }).unwrap_or(false);
     

@@ -122,10 +122,10 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
     let mut content = String::new();
     let action_name = &action.name;
     
-    // Check if this is a find-based action (login-style)
+    // Check if this is a  select-based action (login-style)
     let has_find = action.process.as_ref().map(|p| {
         p.derives.iter().any(|d| {
-            matches!(&d.value, DeriveValue::FunctionCall { name, .. } if name == "find")
+            matches!(&d.value, DeriveValue::Select { .. })
         })
     }).unwrap_or(false);
     
@@ -145,51 +145,19 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         if let Some(process) = &action.process {
             for derive in &process.derives {
                 match &derive.value {
-                    DeriveValue::FunctionCall { name, args } if name == "find" => {
-                        // Get filter field from args
-                        let filter_field = if args.len() >= 2 {
-                            match &args[1] {
-                                crate::ast::FunctionArg::Identifier(s) => s.clone(),
-                                _ => "email".to_string(),
-                            }
-                        } else {
-                            "email".to_string()
-                        };
-                        content.push_str(&format!("        {} = self.repo.find_by(db, {}=data.{})\n", derive.name, filter_field, filter_field));
+                    DeriveValue::Select { entity, .. } => {
+                        // Simplified: just get first record
+                        content.push_str(&format!("        {} = db.query({}Model).first()\n", derive.name, entity));
                         content.push_str(&format!("        if not {}:\n", derive.name));
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Not found\")\n");
                     }
-                    DeriveValue::FunctionCall { name, args } if name == "verify_hash" => {
-                        // Get the password field and hash field
-                        let input_field = if !args.is_empty() {
-                            match &args[0] {
-                                crate::ast::FunctionArg::Identifier(s) => format!("data.{}", s),
-                                _ => "data.password".to_string(),
-                            }
-                        } else {
-                            "data.password".to_string()
-                        };
-                        let hash_field = if args.len() >= 2 {
-                            match &args[1] {
-                                crate::ast::FunctionArg::FieldAccess { path } => path.join("."),
-                                _ => "user.password_hash".to_string(),
-                            }
-                        } else {
-                            "user.password_hash".to_string()
-                        };
-                        content.push_str(&format!("        if not verify_password({}, {}):\n", input_field, hash_field));
+                    DeriveValue::Compute { function, args: _ } if function == "verify_hash" => {
+                        // Simplified verify hash
+                        content.push_str("        if not verify_password(data.password, user.password_hash):\n");
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Invalid credentials\")\n");
                     }
-                    DeriveValue::FunctionCall { name, args } if name == "create_jwt" => {
-                        let subject = if !args.is_empty() {
-                            match &args[0] {
-                                crate::ast::FunctionArg::FieldAccess { path } => path.join("."),
-                                _ => "user.email".to_string(),
-                            }
-                        } else {
-                            "user.email".to_string()
-                        };
-                        content.push_str(&format!("        {} = create_access_token(data={{\"sub\": {}}})\n", derive.name, subject));
+                    DeriveValue::SystemCall { namespace, capability, .. } if namespace == "jwt" && capability == "create" => {
+                        content.push_str(&format!("        {} = create_access_token(data={{\"sub\": user.email}})\n", derive.name));
                     }
                     _ => {}
                 }

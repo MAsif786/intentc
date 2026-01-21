@@ -339,10 +339,10 @@ fn generate_action_function(action: &Action, _ast: &IntentFile) -> CompileResult
             if let Some(return_type) = &returns {
                 let model_name = format!("{}Model", return_type);
                 
-                // Check if process section has a find() call - indicates query action not create
+                // Check if process section has a select - indicates query action not create
                 let has_find = action.process.as_ref().map(|p| {
                     p.derives.iter().any(|d| {
-                        matches!(&d.value, DeriveValue::FunctionCall { name, .. } if name == "find")
+                        matches!(&d.value, DeriveValue::Select { .. })
                     })
                 }).unwrap_or(false);
                 
@@ -350,32 +350,28 @@ fn generate_action_function(action: &Action, _ast: &IntentFile) -> CompileResult
                     // Query-based action (e.g., login)
                     content.push_str("    # Query-based action\n");
                     
-                    // Process derives in order - find returns the entity, verify checks it, etc.
+                    // Process derives in order - select returns the entity, compute checks it, etc.
                     if let Some(process) = &action.process {
                         for derive in &process.derives {
                             match &derive.value {
-                                DeriveValue::FunctionCall { name, args } => {
-                                    match name.as_str() {
-                                        "find" => {
-                                            let py_code = function_call_to_python(name, args);
-                                            content.push_str(&format!("    {} = {}\n", derive.name, py_code));
-                                            content.push_str(&format!("    if not {}:\n", derive.name));
-                                            content.push_str("        raise HTTPException(status_code=400, detail=\"Not found\")\n");
-                                        }
-                                        "verify_hash" => {
-                                            let py_code = function_call_to_python(name, args);
-                                            content.push_str(&format!("    if not {}:\n", py_code));
-                                            content.push_str("        raise HTTPException(status_code=400, detail=\"Invalid credentials\")\n");
-                                        }
-                                        "create_jwt" => {
-                                            let py_code = function_call_to_python(name, args);
-                                            content.push_str(&format!("    {} = {}\n", derive.name, py_code));
-                                        }
-                                        _ => {
-                                            let py_code = function_call_to_python(name, args);
-                                            content.push_str(&format!("    {} = {}\n", derive.name, py_code));
-                                        }
-                                    }
+                                DeriveValue::Select { entity, predicate } => {
+                                    let py_code = select_to_python(entity, predicate);
+                                    content.push_str(&format!("    {} = {}\n", derive.name, py_code));
+                                    content.push_str(&format!("    if not {}:\n", derive.name));
+                                    content.push_str("        raise HTTPException(status_code=400, detail=\"Not found\")\n");
+                                }
+                                DeriveValue::Compute { function, args } if function == "verify_hash" => {
+                                    let py_code = compute_to_python(function, args);
+                                    content.push_str(&format!("    if not {}:\n", py_code));
+                                    content.push_str("        raise HTTPException(status_code=400, detail=\"Invalid credentials\")\n");
+                                }
+                                DeriveValue::SystemCall { namespace, capability, args } => {
+                                    let py_code = system_call_to_python(namespace, capability, args);
+                                    content.push_str(&format!("    {} = {}\n", derive.name, py_code));
+                                }
+                                DeriveValue::Compute { function, args } => {
+                                    let py_code = compute_to_python(function, args);
+                                    content.push_str(&format!("    {} = {}\n", derive.name, py_code));
                                 }
                                 _ => {
                                     let val_expr = derive_value_to_python(&derive.value);
@@ -397,10 +393,10 @@ fn generate_action_function(action: &Action, _ast: &IntentFile) -> CompileResult
                             if is_derived {
                                 content.push_str(&format!("        \"{}\": {},\n", field, field));
                             } else {
-                                // Assume it's from the found entity (first derive with find)
+                                // Assume it's from the found entity (first derive with select)
                                 let found_var = action.process.as_ref()
                                     .and_then(|p| p.derives.iter().find(|d| {
-                                        matches!(&d.value, DeriveValue::FunctionCall { name, .. } if name == "find")
+                                        matches!(&d.value, DeriveValue::Select { .. })
                                     }))
                                     .map(|d| d.name.clone())
                                     .unwrap_or_else(|| "user".to_string());
@@ -580,63 +576,12 @@ fn derive_value_to_python(val: &DeriveValue) -> String {
             }
             path.join(".")
         }
-        DeriveValue::FunctionCall { name, args } => {
-            // Handle built-in functions
-            function_call_to_python(name, args)
-        }
+        DeriveValue::Select { entity, predicate } => select_to_python(entity, predicate),
+        DeriveValue::Compute { function, args } => compute_to_python(function, args),
+        DeriveValue::SystemCall { namespace, capability, args } => system_call_to_python(namespace, capability, args),
     }
 }
 
-fn function_call_to_python(name: &str, args: &[crate::ast::FunctionArg]) -> String {
-    use crate::ast::FunctionArg;
-    
-    let args_str: Vec<String> = args.iter().map(|arg| match arg {
-        FunctionArg::TypeName(s) => s.clone(),
-        FunctionArg::Identifier(s) => format!("data.{}", s),
-        FunctionArg::FieldAccess { path } => path.join("."),
-        FunctionArg::Literal(lit) => match lit {
-            LiteralValue::String(s) => format!("\"{}\"", s),
-            LiteralValue::Number(n) => n.to_string(),
-            LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
-        },
-    }).collect();
-    
-    match name {
-        "find" => {
-            // find(Entity, field1, field2, ...) -> db.query(EntityModel).filter(...)
-            // First arg is entity, rest are filter fields
-            if args.len() >= 2 {
-                let entity = &args_str[0];
-                let filters: Vec<String> = args_str[1..].iter()
-                    .map(|f| format!("{}Model.{} == {}", entity, f.replace("data.", ""), f))
-                    .collect();
-                format!("db.query({}Model).filter({}).first()", entity, filters.join(", "))
-            } else {
-                "None".to_string()
-            }
-        }
-        "verify_hash" => {
-            // verify_hash(input, target) -> verify_password(input, target)
-            if args.len() >= 2 {
-                format!("verify_password({}, {})", args_str[0], args_str[1])
-            } else {
-                "False".to_string()
-            }
-        }
-        "create_jwt" => {
-            // create_jwt(subject) -> create_access_token(data={"sub": subject})
-            if !args.is_empty() {
-                format!("create_access_token(data={{\"sub\": {}}})", args_str[0])
-            } else {
-                "create_access_token(data={})".to_string()
-            }
-        }
-        _ => {
-            // Generic function call
-            format!("{}({})", name, args_str.join(", "))
-        }
-    }
-}
 
 /// Generate policy enforcement code
 fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &str) -> CompileResult<String> {
@@ -686,4 +631,107 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
     }
     
     Ok(content)
+}
+
+fn select_to_python(entity: &str, predicate: &crate::ast::Predicate) -> String {
+    use crate::ast::{FieldReference, CompareOp};
+    
+    let right_str = match &predicate.value {
+        FieldReference::InputField(name) => format!("data.{}", name),
+        FieldReference::DerivedField { name, field } => format!("{}.{}", name, field),
+        FieldReference::Literal(lit) => match lit {
+            LiteralValue::String(s) => format!("\"{}\"", s),
+            LiteralValue::Number(n) => n.to_string(),
+            LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    };
+    
+    let op_str = match predicate.operator {
+        CompareOp::Equal => "==",
+        CompareOp::NotEqual => "!=",
+        CompareOp::Less => "<",
+        CompareOp::Greater => ">",
+    };
+    
+    // Determine filter field name (left side of predicate)
+    let filter_field = match &predicate.field {
+        FieldReference::InputField(name) | FieldReference::DerivedField { field: name, .. } => name.clone(),
+        _ => "id".to_string(),
+    };
+    
+    format!("db.query({}Model).filter({}Model.{} {} {}).first()", entity, entity, filter_field, op_str, right_str)
+}
+
+fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg]) -> String {
+    use crate::ast::FunctionArg;
+    
+    let args_str: Vec<String> = args.iter().map(|arg| match arg {
+        FunctionArg::TypeName(s) => s.clone(),
+        FunctionArg::Identifier(s) => format!("data.{}", s),
+        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Literal(lit) => match lit {
+            LiteralValue::String(s) => format!("\"{}\"", s),
+            LiteralValue::Number(n) => n.to_string(),
+            LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    }).collect();
+    
+    match function {
+        "verify_hash" => {
+            // verify_hash(input, target) -> verify_password(input, target)
+            if args.len() >= 2 {
+                format!("verify_password({}, {})", args_str[0], args_str[1])
+            } else {
+                "False".to_string()
+            }
+        }
+        "slugify" => {
+            if !args.is_empty() {
+                format!("\"{}\".lower().replace(' ', '-')", args_str[0])
+            } else {
+                "\"\"".to_string()
+            }
+        }
+        _ => {
+            // Generic compute function
+            format!("{}({})", function, args_str.join(", "))
+        }
+    }
+}
+
+fn system_call_to_python(namespace: &str, capability: &str, args: &[crate::ast::FunctionArg]) -> String {
+    use crate::ast::FunctionArg;
+    
+    let args_str: Vec<String> = args.iter().map(|arg| match arg {
+        FunctionArg::TypeName(s) => s.clone(),
+        FunctionArg::Identifier(s) => format!("data.{}", s),
+        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Literal(lit) => match lit {
+            LiteralValue::String(s) => format!("\"{}\"", s),
+            LiteralValue::Number(n) => n.to_string(),
+            LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    }).collect();
+    
+    match (namespace, capability) {
+        ("jwt", "create") => {
+            // jwt.create(subject) -> create_access_token(data={"sub": subject})
+            if !args.is_empty() {
+                format!("create_access_token(data={{\"sub\": {}}})", args_str[0])
+            } else {
+                "create_access_token(data={})".to_string()
+            }
+        }
+        ("jwt", "verify") => {
+            if !args.is_empty() {
+                format!("verify_token({})", args_str[0])
+            } else {
+                "verify_token()".to_string()
+            }
+        }
+        _ => {
+            // Generic system call
+            format!("{}_{}({})", namespace, capability, args_str.join(", "))
+        }
+    }
 }

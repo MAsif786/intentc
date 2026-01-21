@@ -56,9 +56,9 @@ action login:
         email: email
         password: string
     process:
-        derive user = find(User, email)
-        derive valid = verify_hash(password, user.password_hash)
-        derive token = create_jwt(user.email)
+        derive user = select User where email == input.email
+        derive valid = compute verify_hash(password, user.password_hash)
+        derive token = system jwt.create(user.email)
     output: User(id, token)
 
 # Product Actions

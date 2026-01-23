@@ -48,8 +48,8 @@ test:
 
 # Run generated Python tests
 test-python: setup
-	@echo "🧪 Running Python tests..."
-	@cd $(OUTPUT_DIR) && ../$(VENV)/bin/pytest tests/ -v
+	@echo "🧪 Running Python tests with coverage..."
+	@cd $(OUTPUT_DIR) && ../$(VENV)/bin/pytest tests/ -v --cov=.
 
 # Run all tests
 test-all: test test-python

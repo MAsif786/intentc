@@ -11,6 +11,7 @@ mod policies;
 mod repositories;
 mod services;
 mod controllers;
+mod auth;
 
 use std::fs;
 use std::path::Path;
@@ -82,6 +83,7 @@ bcrypt==4.0.1
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
 httpx>=0.25.0
 "#;
 
@@ -165,7 +167,7 @@ if __name__ == "__main__":
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -174,8 +176,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 
 settings = Settings()
@@ -205,7 +206,7 @@ def get_db():
 
     /// Generate __init__.py files
     fn generate_init_files(&self, output_dir: &Path) -> CompileResult<()> {
-        let dirs = ["models", "db", "api", "logic", "tests"];
+        let dirs = ["models", "db", "api", "logic", "tests", "core"];
         
         for dir in dirs {
             let path = output_dir.join(dir).join("__init__.py");
@@ -225,6 +226,24 @@ DATABASE_URL=sqlite:///./app.db
 "#;
 
         fs::write(output_dir.join(".env.example"), content)?;
+        Ok(())
+    }
+
+    /// Generate .coveragerc
+    fn generate_coveragerc(&self, output_dir: &Path) -> CompileResult<()> {
+        let content = r#"[run]
+source = .
+omit =
+    tests/*
+    */__init__.py
+    db/migrations/*
+
+[report]
+show_missing = True
+precision = 2
+"#;
+
+        fs::write(output_dir.join(".coveragerc"), content)?;
         Ok(())
     }
 }
@@ -261,6 +280,10 @@ impl CodeGenerator for PythonGenerator {
         self.generate_env_example(output_dir)?;
         result.add_file(".env.example", 4);
 
+        // Generate .coveragerc
+        self.generate_coveragerc(output_dir)?;
+        result.add_file(".coveragerc", 10);
+
         // Generate Pydantic models
         let models_result = models::generate_models(ast, output_dir)?;
         result.merge(models_result);
@@ -296,6 +319,10 @@ impl CodeGenerator for PythonGenerator {
         // Generate policies
         let policies_result = policies::generate_policies(ast, output_dir)?;
         result.merge(policies_result);
+
+        // Generate security & auth
+        let auth_result = auth::generate_security(ast, output_dir)?;
+        result.merge(auth_result);
 
         // Generate tests
         if self.generate_tests {

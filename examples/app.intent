@@ -1,8 +1,8 @@
 policy AdminOnly:
-    subject: User
-    require User.role == "admin"
+    subject: @auth
+    require subject.role == "admin"
 
-entity User:
+auth entity User:
     id: uuid @primary @default(uuid)
     email: email @unique @index
     password_hash: string
@@ -20,7 +20,7 @@ entity Product:
     status: string @default("active")
 
     policy InStock:
-        subject: User
+        subject: @auth
         require Product.stock > 0
 
 entity Order:
@@ -31,8 +31,8 @@ entity Order:
     created_at: datetime @default(now)
 
     policy OwnsOrder:
-        subject: User
-        require Order.user_id == User.id
+        subject: @auth
+        require Order.user_id == subject.id
 
 entity Review:
     id: uuid @primary @default(uuid)

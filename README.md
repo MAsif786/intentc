@@ -4,11 +4,11 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.2-green)](https://github.com/MAsif786/intentc/releases/tag/v0.2)
+[![Version](https://img.shields.io/badge/version-v0.3.1-green)](https://github.com/MAsif786/intentc/releases/tag/v0.3.1)
 
 ## What is Intent Compiler?
 
-Intent Compiler is a **code generation tool** that transforms a simple, human-readable Intent Definition Language (IDL) into a complete Python backend application with clean layered architecture. Write 25 lines of intent, get 1800+ lines of production-ready code.
+Intent Compiler is a **code generation tool** that transforms a simple, human-readable Intent Definition Language (IDL) into a complete Python backend application with clean layered architecture. Write 30 lines of intent, get 2000+ lines of production-ready code.
 
 ### The Problem
 
@@ -18,33 +18,38 @@ Building backends involves repetitive boilerplate:
 - FastAPI routes for API endpoints
 - Business rule validation
 - Database migrations
+- Security & Auth implementation
 - Test scaffolding
 
-### The Solution
+### The Solution (v0.3)
 
 Define your **intent** once, let the compiler generate everything:
 
 ```intent
-entity User:
-    id: string @primary
-    name: string
-    email: string @unique
-    age: number
-    status: active | inactive
+# Designate User as the auth entity
+auth entity User:
+    id: uuid @primary @default(uuid)
+    email: email @unique @index
+    password_hash: string
+    role: string @default("user")
 
-action create_user:
-    name: string
-    email: string
-    age: number
-    @api POST /users
-    @returns User
+@api POST /login
+action login:
+    input:
+        email: email
+        password: string
+    process:
+        derive user = select User where email == input.email
+        derive valid = compute verify_hash(password, user.password_hash)
+        derive token = system jwt.create(user.email)
+    output: User(id, email, token)
 
-rule ValidateAge:
-    when User.age < 18
-    then reject("User must be 18 or older")
+policy AdminOnly:
+    subject: @auth  # References the auth entity
+    require subject.role == "admin"
 ```
 
-**Output:** A complete FastAPI application with Pydantic models, SQLAlchemy ORM, API routes, business rules, migrations, and tests.
+**Output:** A complete FastAPI application with Pydantic models, SQLAlchemy ORM, API routes, business rules, policies, migrations, and tests.
 
 ## Installation
 
@@ -63,8 +68,9 @@ cargo build --release
 
 ### Requirements
 
-- Rust 1.70 or higher
+- Rust 1.75 or higher
 - Cargo (comes with Rust)
+- Python 3.10+ (for running generated code)
 
 ## Quick Start
 
@@ -74,23 +80,24 @@ Create `app.intent`:
 
 ```intent
 entity Product:
-    id: string @primary
-    name: string
-    price: number
-    category: electronics | clothing | food
-    in_stock: boolean
+    id: uuid @primary @default(uuid)
+    name: string @index
+    price: number @validate(min: 0)
+    stock: number @default(0)
 
+@api POST /products
+@auth
 action create_product:
-    name: string
-    price: number
-    category: string
-    @api POST /products
-    @returns Product
+    input:
+        name: string
+        price: number
+    output: Product(id, name)
 
+@api GET /products/{id}
 action get_product:
-    id: string
-    @api GET /products/{id}
-    @returns Product
+    input:
+        id: uuid
+    output: Product(id, name, price)
 ```
 
 ### 2. Compile
@@ -101,12 +108,12 @@ intentc compile -i app.intent -o my-api
 
 ### 3. Run the Generated API
 
+The generated code includes a `Makefile` for convenience:
+
 ```bash
 cd my-api
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
+make setup  # Creates venv, installs deps, runs migrations
+make run    # Starts the FastAPI server
 ```
 
 Your API is now running at `http://localhost:8000`!
@@ -130,35 +137,43 @@ Options:
 ```bash
 intentc check -i <input.intent>
 
-# Validates the intent file without generating code
-```
-
-### `init` - Create New Project
-
-```bash
-intentc init my-project
-
-# Creates a new project with:
-# - src/app.intent (example)
-# - README.md
-# - .gitignore
+# Validates the intent file without generating code (v0.3)
 ```
 
 ## Intent Definition Language (IDL)
 
 ### Entities
 
-Define your data models:
+Define your data models with fields and constraints:
 
 ```intent
 entity User:
-    id: string @primary
-    name: string
-    email: string @unique
-    age: number
-    is_active: boolean
+    id: uuid @primary @default(uuid)
+    email: email @unique @index
+    full_name: string
+    status: active | inactive @default("active")
     created_at: datetime @default(now)
+
+    # Scoped policy
+    policy CanUpdateProfile:
+        subject: @auth
+        require subject.id == User.id
 ```
+
+#### Auth Entity (v0.3.1)
+
+Designate a special entity for authentication:
+
+```intent
+auth entity User:
+    id: uuid @primary @default(uuid)
+    email: email @unique
+    password_hash: string
+```
+
+- Only **one** `auth entity` per file is allowed
+- `@auth` decorator without arguments uses the auth entity
+- Policies can use `@auth` as subject to reference the auth entity
 
 #### Field Types
 
@@ -168,6 +183,8 @@ entity User:
 | `number` | Numeric data | `float` |
 | `boolean` | True/false | `bool` |
 | `datetime` | Date and time | `datetime` |
+| `uuid` | UUID string | `UUID` |
+| `email` | Email string | `EmailStr` |
 | `a \| b \| c` | Enum values | `Literal["a", "b", "c"]` |
 | `EntityName` | Reference | Foreign key |
 | `[type]` | Array | `List[type]` |
@@ -181,49 +198,12 @@ entity User:
 | `@unique` | Unique constraint |
 | `@optional` | Nullable field |
 | `@index` | Database index |
-| `@default(value)` | Default value |
+| `@default(value)` | Default value (supports `now`, `uuid`) |
+| `@validate(...)` | Constraints like `min: 0`, `max: 100` |
 
-### Actions
+### Actions (v0.3 Structured Syntax)
 
-Define API endpoints:
-
-```intent
-action create_user:
-    name: string
-    email: string
-    age: number
-    @api POST /users
-    @returns User
-
-action get_user:
-    id: string
-    @api GET /users/{id}
-    @returns User
-
-action update_user:
-    id: string
-    name: string
-    email: string
-    @api PUT /users/{id}
-    @returns User
-
-action delete_user:
-    id: string
-    @api DELETE /users/{id}
-```
-
-#### Action Decorators
-
-| Decorator | Description |
-|-----------|-------------|
-| `@api METHOD /path` | HTTP endpoint (GET, POST, PUT, PATCH, DELETE) |
-| `@returns EntityName` | Response type |
-| `@auth` | Requires JWT authentication |
-| `@map(field -> target, transform)` | Transform input (e.g., hash passwords) |
-
-### Process Section (v0.2)
-
-Define complex logic with built-in functions:
+Actions define API endpoints and business flows:
 
 ```intent
 @api POST /login
@@ -232,19 +212,46 @@ action login:
         email: email
         password: string
     process:
-        derive user = find(User, email)
-        derive valid = verify_hash(password, user.password_hash)
-        derive token = create_jwt(user.email)
-    output: User(id, token)
+        derive user = select User where email == input.email
+        derive valid = compute verify_hash(password, user.password_hash)
+        derive token = system jwt.create(user.email)
+    output: User(id, email, token)
 ```
 
-#### Built-in Functions
+#### Process Block (v0.3)
 
-| Function | Description |
-|----------|-------------|
-| `find(Entity, field1, field2, ...)` | Query entity by fields |
-| `verify_hash(input, hash_field)` | Verify password hash |
-| `create_jwt(subject)` | Generate JWT token |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `select` | Query database | `derive u = select User where email == e` |
+| `compute`| Call business logic | `derive v = compute hash(pass)` |
+| `system` | External capability | `derive t = system jwt.create(sub)` |
+
+#### Action Decorators
+
+| Decorator | Description |
+|-----------|-------------|
+| `@api METHOD /path` | HTTP endpoint mapping |
+| `@auth` | Requires JWT authentication |
+| `@auth(validate(id))` | Custom auth validation |
+| `@policy(Name)` | Enforces a specific policy |
+| `@map(field, hash)` | Transforms input field (e.g. password) |
+
+### Policies (v0.3)
+
+Declare authorization and access control rules:
+
+```intent
+policy AdminOnly:
+    subject: @auth
+    require subject.role == "admin"
+
+@api DELETE /users/{id}
+@auth
+@policy(AdminOnly)
+action delete_user:
+    input:
+        id: uuid
+```
 
 ### Rules
 
@@ -276,7 +283,7 @@ rule NotifyAdmin:
 |-------------|-------------|
 | `reject("message")` | Raise HTTP 400 error |
 | `log("message")` | Log message |
-| `action_name(args)` | Call another action |
+| `action_call(args)` | Call another action |
 
 ## Generated Output
 
@@ -287,11 +294,9 @@ output/
 ├── .env.example         # Environment template
 ├── api/
 │   └── routes.py        # API endpoints
-├── controllers/         # Request handlers (v0.2)
-│   └── <entity>_controller.py
-├── services/            # Business logic (v0.2)
-│   └── <entity>_service.py
-├── repositories/        # Data access (v0.2)
+├── controllers/         # Request handlers (Singleton Pattern)
+├── services/            # Business logic (Singleton Pattern)
+├── repositories/        # Data access (Singleton Pattern)
 │   ├── base.py          # Generic CRUD
 │   └── <entity>_repository.py
 ├── db/
@@ -311,13 +316,13 @@ output/
     └── test_api.py      # API tests
 ```
 
-### Layered Architecture (v0.2)
+### Layered Architecture (v0.3)
 
 | Layer | Responsibility |
 |-------|----------------|
-| **Controllers** | Handle HTTP requests, call services |
-| **Services** | Business logic, validation, transformations |
-| **Repositories** | Database CRUD operations |
+| **Controllers** | Handle HTTP requests, call services (Singleton) |
+| **Services** | Business logic, validation, transformations (Singleton) |
+| **Repositories** | Database CRUD operations (Singleton Pattern) |
 
 ## Generated Technology Stack
 
@@ -336,7 +341,7 @@ output/
 
 ```intent
 entity Product:
-    id: string @primary
+    id: uuid @primary @default(uuid)
     name: string
     description: string?
     price: number
@@ -344,17 +349,18 @@ entity Product:
     in_stock: boolean
 
 entity Order:
-    id: string @primary
-    user_id: string
+    id: uuid @primary @default(uuid)
+    user_id: uuid
     total: number
     status: pending | processing | shipped | delivered
     created_at: datetime @default(now)
 
+@api POST /orders
+@auth
 action create_order:
-    user_id: string
-    product_ids: [string]
-    @api POST /orders
-    @returns Order
+    input:
+        product_ids: [uuid]
+    output: Order(id, status, total)
 
 rule MinimumOrder:
     when Order.total < 10
@@ -365,24 +371,26 @@ rule MinimumOrder:
 
 ```intent
 entity Post:
-    id: string @primary
+    id: uuid @primary @default(uuid)
     title: string
     content: string
-    author_id: string
+    author_id: uuid
     status: draft | published | archived
     created_at: datetime @default(now)
 
 entity Comment:
-    id: string @primary
-    post_id: string
+    id: uuid @primary @default(uuid)
+    post_id: uuid
     author: string
     content: string
     created_at: datetime @default(now)
 
+@api PATCH /posts/{id}/publish
+@auth
 action publish_post:
-    id: string
-    @api PATCH /posts/{id}/publish
-    @returns Post
+    input:
+        id: uuid
+    output: Post(id, title, status)
 
 rule ContentRequired:
     when Post.content == ""
@@ -427,19 +435,19 @@ src/
 - [x] JWT Authentication (`@auth`)
 - [x] Password hashing (`@map` with hash transform)
 - [x] Layered architecture (Repository/Service/Controller)
-- [x] DSL-based login flow (`find`, `verify_hash`, `create_jwt`)
-- [x] Build time logging
+- [x] Process engine with `derive` syntax (v0.3)
+- [x] Authorization Policies (v0.3)
+- [x] UUID and Email primitive types (v0.3)
+- [x] Dedicated `auth entity` syntax (v0.3.1)
 - [ ] TypeScript/Node.js target
 - [ ] Go target
-- [ ] GraphQL support
 - [ ] OpenAPI export
 - [ ] VS Code extension
 - [ ] Language server (LSP)
 
 ## Contributing
 
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) first.
-
+Contributions are welcome! Please reach out to [EMAIL_ADDRESS]
 ## License
 
 Apache-2.0 - see [LICENSE](LICENSE) for details.

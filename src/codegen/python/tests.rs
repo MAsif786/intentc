@@ -27,6 +27,21 @@ pub fn generate_tests(ast: &IntentFile, output_dir: &Path) -> CompileResult<Gene
     fs::write(output_dir.join("tests/test_api.py"), &api_tests)?;
     result.add_file("tests/test_api.py", api_tests.lines().count());
 
+    // Generate repository tests
+    let repository_tests = generate_repository_tests(ast)?;
+    fs::write(output_dir.join("tests/test_repositories.py"), &repository_tests)?;
+    result.add_file("tests/test_repositories.py", repository_tests.lines().count());
+
+    // Generate service tests
+    let service_tests = generate_service_tests(ast)?;
+    fs::write(output_dir.join("tests/test_services.py"), &service_tests)?;
+    result.add_file("tests/test_services.py", service_tests.lines().count());
+
+    // Generate controller tests
+    let controller_tests = generate_controller_tests(ast)?;
+    fs::write(output_dir.join("tests/test_controllers.py"), &controller_tests)?;
+    result.add_file("tests/test_controllers.py", controller_tests.lines().count());
+
     Ok(result)
 }
 
@@ -294,4 +309,81 @@ fn get_sample_value(field_type: &crate::ast::FieldType) -> String {
         crate::ast::FieldType::List(_) => "[]".to_string(),
         crate::ast::FieldType::Optional(inner) => get_sample_value(inner),
     }
+}
+
+/// Generate repository tests
+fn generate_repository_tests(ast: &IntentFile) -> CompileResult<String> {
+    let mut content = String::new();
+    content.push_str("# Intent Compiler Generated Repository Tests\n");
+    content.push_str("# Generated automatically - do not edit\n\n");
+    content.push_str("import pytest\n");
+    content.push_str("from repositories import *\n");
+    content.push_str("from db.models import *\n\n\n");
+
+    for entity in &ast.entities {
+        let repo_class = format!("{}Repository", entity.name);
+        content.push_str(&format!("class Test{}:\n", repo_class));
+        content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", repo_class));
+        
+        content.push_str("    def test_repository_is_singleton(self):\n");
+        content.push_str(&format!("        repo1 = {}()\n", repo_class));
+        content.push_str(&format!("        repo2 = {}()\n", repo_class));
+        content.push_str("        assert repo1 is repo2\n\n");
+
+        content.push_str("    def test_repository_get_all(self, db):\n");
+        content.push_str(&format!("        repo = {}()\n", repo_class));
+        content.push_str("        results = repo.get_all(db)\n");
+        content.push_str("        assert isinstance(results, list)\n\n");
+    }
+
+    Ok(content)
+}
+
+/// Generate service tests
+fn generate_service_tests(ast: &IntentFile) -> CompileResult<String> {
+    let mut content = String::new();
+    content.push_str("# Intent Compiler Generated Service Tests\n");
+    content.push_str("# Generated automatically - do not edit\n\n");
+    content.push_str("import pytest\n");
+    content.push_str("from services import *\n\n\n");
+
+    for entity in &ast.entities {
+        let service_class = format!("{}Service", entity.name);
+        content.push_str(&format!("class Test{}:\n", service_class));
+        content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", service_class));
+        
+        content.push_str("    def test_service_is_singleton(self):\n");
+        content.push_str(&format!("        service1 = {}()\n", service_class));
+        content.push_str(&format!("        service2 = {}()\n", service_class));
+        content.push_str("        assert service1 is service2\n\n");
+
+        content.push_str("    def test_service_get_all(self, db):\n");
+        content.push_str(&format!("        service = {}()\n", service_class));
+        content.push_str("        results = service.get_all(db)\n");
+        content.push_str("        assert isinstance(results, list)\n\n");
+    }
+
+    Ok(content)
+}
+
+/// Generate controller tests
+fn generate_controller_tests(ast: &IntentFile) -> CompileResult<String> {
+    let mut content = String::new();
+    content.push_str("# Intent Compiler Generated Controller Tests\n");
+    content.push_str("# Generated automatically - do not edit\n\n");
+    content.push_str("import pytest\n");
+    content.push_str("from controllers import *\n\n\n");
+
+    for entity in &ast.entities {
+        let controller_class = format!("{}Controller", entity.name);
+        content.push_str(&format!("class Test{}:\n", controller_class));
+        content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", controller_class));
+        
+        content.push_str("    def test_controller_is_singleton(self):\n");
+        content.push_str(&format!("        ctrl1 = {}()\n", controller_class));
+        content.push_str(&format!("        ctrl2 = {}()\n", controller_class));
+        content.push_str("        assert ctrl1 is ctrl2\n\n");
+    }
+
+    Ok(content)
 }

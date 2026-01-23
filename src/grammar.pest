@@ -15,13 +15,19 @@ indent = _{ "    " | "\t" }
 intent_file = { SOI ~ (nl | definition)* ~ EOI }
 
 // Top-level definitions
-definition = { entity_def | full_action_def | rule_def | policy_def }
+definition = { auth_entity_def | entity_def | full_action_def | rule_def | policy_def }
 
 // ============================================
 // Entity Definition 
 // ============================================
 entity_def = {
     "entity" ~ ws+ ~ entity_name ~ ":" ~ nl ~
+    entity_fields
+}
+
+// Auth Entity Definition (special single entity for authentication)
+auth_entity_def = {
+    "auth" ~ ws+ ~ "entity" ~ ws+ ~ entity_name ~ ":" ~ nl ~
     entity_fields
 }
 
@@ -173,7 +179,9 @@ nested_policy_def = {
 }
 
 policy_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
-subject_name = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
+subject_name = { auth_subject | entity_subject }
+auth_subject = @{ "@auth" }
+entity_subject = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // ============================================
 // Decorators
@@ -233,7 +241,8 @@ primary = { paren_expr | field_access | literal | identifier }
 
 paren_expr = { "(" ~ ws* ~ expression ~ ws* ~ ")" }
 
-field_access = { entity_ref ~ "." ~ field_ref }
+field_access = { (subject_prefix | entity_ref) ~ "." ~ field_ref }
+subject_prefix = @{ "subject" }
 entity_ref = @{ ASCII_ALPHA_UPPER ~ (ASCII_ALPHANUMERIC | "_")* }
 field_ref = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
 

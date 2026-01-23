@@ -12,6 +12,8 @@ pub struct ValidationContext {
     pub actions: HashMap<String, Action>,
     pub policies: HashMap<String, Policy>,
     pub warnings: Vec<Warning>,
+    /// The designated auth entity name, if one is defined
+    pub auth_entity: Option<String>,
 }
 
 impl ValidationContext {
@@ -21,6 +23,7 @@ impl ValidationContext {
             actions: HashMap::new(),
             policies: HashMap::new(),
             warnings: Vec::new(),
+            auth_entity: None,
         }
     }
 
@@ -49,6 +52,19 @@ pub fn validate(file: &IntentFile) -> CompileResult<ValidationContext> {
             ));
         } else {
             ctx.entities.insert(entity.name.clone(), entity.clone());
+        }
+
+        // Check for auth entity
+        if entity.is_auth {
+            if ctx.auth_entity.is_some() {
+                errors.push(CompileError::validation(
+                    format!("Multiple auth entities defined: '{}' and '{}'. Only one auth entity is allowed.",
+                        ctx.auth_entity.as_ref().unwrap(), entity.name),
+                    entity.location.clone(),
+                ));
+            } else {
+                ctx.auth_entity = Some(entity.name.clone());
+            }
         }
     }
 
@@ -106,6 +122,22 @@ pub fn validate(file: &IntentFile) -> CompileResult<ValidationContext> {
     for rule in &file.rules {
         if let Err(e) = validate_rule(rule, &ctx) {
             errors.push(e);
+        }
+    }
+
+    // Validate global policies
+    for policy in &file.policies {
+        if let Err(e) = validate_expression(&policy.require, &ctx, &policy.location) {
+            errors.push(e);
+        }
+    }
+
+    // Validate entity-scoped policies
+    for entity in &file.entities {
+        for policy in &entity.policies {
+            if let Err(e) = validate_expression(&policy.require, &ctx, &policy.location) {
+                errors.push(e);
+            }
         }
     }
 
@@ -297,6 +329,15 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
                             ));
                         }
                     }
+                } else {
+                    // @auth without arguments requires an auth entity to be defined
+                    if ctx.auth_entity.is_none() {
+                        return Err(CompileError::validation_with_hint(
+                            "@auth decorator used without arguments, but no auth entity is defined".to_string(),
+                            action.location.clone(),
+                            "Define an auth entity using 'auth entity EntityName:' or specify an entity/action in @auth(Name)",
+                        ));
+                    }
                 }
             }
             Decorator::Policy(name) => {
@@ -378,6 +419,10 @@ fn validate_expression(
             validate_expression(inner, ctx, location)?;
         }
         Expression::FieldAccess { entity, field } => {
+            if entity == "subject" {
+                // 'subject' is a special keyword allowed in policy expressions
+                return Ok(());
+            }
             // Check entity exists
             if let Some(ent) = ctx.entities.get(entity) {
                 // Check field exists

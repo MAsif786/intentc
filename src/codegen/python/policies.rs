@@ -93,7 +93,7 @@ fn expression_to_python(expr: &crate::ast::Expression, subject: &str, target_var
             format!("not ({})", expression_to_python(inner, subject, target_var))
         }
         Expression::FieldAccess { entity, field } => {
-            if entity == subject {
+            if entity == subject || entity == "subject" {
                 format!("user.{}", field)
             } else {
                 format!("{}.{}", target_var, field)

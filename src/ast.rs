@@ -11,6 +11,8 @@ pub struct IntentFile {
     pub actions: Vec<Action>,
     pub rules: Vec<Rule>,
     pub policies: Vec<Policy>,
+    /// Name of the designated auth entity (if any)
+    pub auth_entity: Option<String>,
     /// Source file path for error reporting
     pub source_path: Option<String>,
 }
@@ -21,6 +23,8 @@ pub struct Entity {
     pub name: String,
     pub fields: Vec<Field>,
     pub policies: Vec<Policy>,
+    /// Whether this entity is marked as auth entity
+    pub is_auth: bool,
     pub location: SourceLocation,
 }
 
@@ -368,6 +372,7 @@ impl IntentFile {
             actions: Vec::new(),
             rules: Vec::new(),
             policies: Vec::new(),
+            auth_entity: None,
             source_path: None,
         }
     }

@@ -46,7 +46,12 @@ pub fn parse_intent(source: &str) -> CompileResult<IntentFile> {
 fn parse_definition(pair: pest::iterators::Pair<Rule>, file: &mut IntentFile) -> CompileResult<()> {
     for inner in pair.into_inner() {
         match inner.as_rule() {
-            Rule::entity_def => file.entities.push(parse_entity(inner)?),
+            Rule::entity_def => file.entities.push(parse_entity(inner, false)?),
+            Rule::auth_entity_def => {
+                let entity = parse_entity(inner, true)?;
+                file.auth_entity = Some(entity.name.clone());
+                file.entities.push(entity);
+            }
             Rule::full_action_def => file.actions.push(parse_action(inner)?),
             Rule::rule_def => file.rules.push(parse_rule(inner)?),
             Rule::policy_def => file.policies.push(parse_policy(inner)?),
@@ -57,7 +62,7 @@ fn parse_definition(pair: pest::iterators::Pair<Rule>, file: &mut IntentFile) ->
 }
 
 /// Parse entity definition
-fn parse_entity(pair: pest::iterators::Pair<Rule>) -> CompileResult<Entity> {
+fn parse_entity(pair: pest::iterators::Pair<Rule>, is_auth: bool) -> CompileResult<Entity> {
     let location = get_location(&pair);
     let mut name = String::new();
     let mut fields = Vec::new();
@@ -95,7 +100,7 @@ fn parse_entity(pair: pest::iterators::Pair<Rule>) -> CompileResult<Entity> {
         }
     }
 
-    Ok(Entity { name, fields, policies, location })
+    Ok(Entity { name, fields, policies, is_auth, location })
 }
 
 /// Parse field definition
@@ -898,6 +903,7 @@ fn parse_primary(pair: pest::iterators::Pair<Rule>) -> CompileResult<Expression>
             let mut field = String::new();
             for inner in pair.into_inner() {
                 match inner.as_rule() {
+                    Rule::subject_prefix => entity = "subject".to_string(),
                     Rule::entity_ref => entity = inner.as_str().to_string(),
                     Rule::field_ref => field = inner.as_str().to_string(),
                     _ => {}

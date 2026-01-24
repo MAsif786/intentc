@@ -525,7 +525,7 @@ fn validate_policy(policy: &Policy, ctx: &ValidationContext) -> CompileResult<()
 fn validate_process(
     process: &ProcessSection,
     ctx: &ValidationContext,
-    location: &SourceLocation,
+    _location: &SourceLocation,
     input_fields: &HashSet<String>,
 ) -> CompileResult<()> {
     let mut scope = input_fields.clone();
@@ -634,13 +634,13 @@ fn validate_delete(delete: &DeleteStatement, ctx: &ValidationContext, scope: &Ha
     Ok(())
 }
 
-fn validate_predicate(predicate: &Predicate, ctx: &ValidationContext, scope: &HashSet<String>, location: &SourceLocation) -> CompileResult<()> {
+fn validate_predicate(_predicate: &Predicate, _ctx: &ValidationContext, _scope: &HashSet<String>, _location: &SourceLocation) -> CompileResult<()> {
     // Validate field references in predicate
     // TODO: deeper validation of types
     Ok(())
 }
 
-fn validate_function_arg(arg: &FunctionArg, scope: &HashSet<String>, location: &SourceLocation) -> CompileResult<()> {
+fn validate_function_arg(arg: &FunctionArg, scope: &HashSet<String>, _location: &SourceLocation) -> CompileResult<()> {
     match arg {
         FunctionArg::Identifier(id) => {
              if !scope.contains(id) {

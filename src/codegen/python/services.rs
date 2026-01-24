@@ -324,7 +324,7 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
 
         // Return output
         content.push_str("        return {\n");
-        if let Some(output) = &action.output {
+        if let Some(_output) = &action.output {
              content.push_str(&format!("            \"id\": \"done\",\n")); // Placeholder
              // In real app, we might return last created ID. 
              // The user example had 'output: Secret(id)'. 

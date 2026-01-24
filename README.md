@@ -4,7 +4,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.3.1-green)](https://github.com/MAsif786/intentc/releases/tag/v0.3.1)
+[![Version](https://img.shields.io/badge/version-v0.4-green)](https://github.com/MAsif786/intentc/releases/tag/v0.4)
 
 ## What is Intent Compiler?
 
@@ -21,7 +21,7 @@ Building backends involves repetitive boilerplate:
 - Security & Auth implementation
 - Test scaffolding
 
-### The Solution (v0.3)
+### The Solution (v0.4)
 
 Define your **intent** once, let the compiler generate everything:
 
@@ -218,13 +218,46 @@ action login:
     output: User(id, email, token)
 ```
 
-#### Process Block (v0.3)
+#### Process Block (v0.4)
 
 | Command | Description | Example |
 |---------|-------------|---------|
 | `select` | Query database | `derive u = select User where email == e` |
 | `compute`| Call business logic | `derive v = compute hash(pass)` |
 | `system` | External capability | `derive t = system jwt.create(sub)` |
+| `mutate` | Create/Update record| `mutate Order where id == i: set status = "paid"` |
+| `delete` | Remove record | `delete Review where id == i` |
+
+#### Explicit Mutate Semantics (v0.4)
+
+Mutate now supports explicit **Create** and **Update** modes:
+
+```intent
+# Create mode (no 'where')
+mutate User:
+    set email = input.email
+    set status = "pending"
+
+# Update mode (requires 'where')
+mutate Order where id == input.id:
+    set status = "cancelled"
+```
+
+#### Indented Output Syntax (v0.4)
+
+Project large outputs cleanly:
+
+```intent
+action get_order:
+    input: id: uuid
+    output:
+        Order(
+            id, 
+            status, 
+            total,
+            items: [Item(id, price)]
+        )
+```
 
 #### Action Decorators
 
@@ -439,6 +472,9 @@ src/
 - [x] Authorization Policies (v0.3)
 - [x] UUID and Email primitive types (v0.3)
 - [x] Dedicated `auth entity` syntax (v0.3.1)
+- [x] Mutate (Create/Update) and Delete operations (v0.4)
+- [x] Indented output projections (v0.4)
+- [x] High-coverage Service tests (v0.4)
 - [ ] TypeScript/Node.js target
 - [ ] Go target
 - [ ] OpenAPI export

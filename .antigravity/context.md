@@ -3,7 +3,7 @@
 ## Project Overview
 `intentc` is a Rust-based compiler that transforms a custom **Intent Definition Language (IDL)** into a fully functional **Python backend** using FastAPI, SQLAlchemy, and Pydantic.
 
-## Current Version: v0.3.1
+## Current Version: v0.4
 
 ## Technology Stack
 - **Compiler**: Rust (using `pest` for PEG parsing, `clap` for CLI).
@@ -25,23 +25,21 @@
 - `examples/`: Example `.intent` files for testing.
 - `output/`: The latest generated Python project.
 
-## Current Features (v0.3.1)
+## Current Features (v0.4)
 - [x] **Parser**: Entities, Actions (structured syntax), Rules, Policies.
 - [x] **Validator**: Type checking, decorator validation, policy verification.
 - [x] **Auth Entity**: Dedicated `auth entity Name:` syntax for authentication.
 - [x] **Process Engine**: `derive` syntax with `select`, `compute`, `system` commands.
+- [x] **Atomic Ops**: `mutate` (Create/Update) and `delete` operations in process flow.
+- [x] **Indented Output**: Support for multiline `output:` projections.
 - [x] **Layered Architecture**: Repository/Service/Controller pattern (singletons).
 - [x] **JWT Authentication**: `@auth` decorator with protected routes.
 - [x] **Password Hashing**: `@map(field, hash)` for bcrypt transforms.
-- [x] **Policies**: Authorization rules with `@policy(Name)` decorator.
-- [x] **Field Types**: `uuid`, `email`, enums, optionals, arrays, references.
-- [x] **Mutate & Delete**: Atomic write and delete operations in process flow.
 
 ## Recent Milestones
-- **v0.4**: Added `mutate` (create/update) and `delete` operations in process flow, indented output syntax.
+- **v0.4**: Added `mutate` (create/update) and `delete` operations, indented output syntax.
 - **v0.3.1**: Added `auth entity` syntax with validation (single auth entity, @auth requirements).
 - **v0.3**: Structured actions with `input`/`process`/`output`, policies, layered architecture.
-- **v0.2**: JWT authentication, password hashing, `@auth` decorator.
 
 ## Common Commands
 ```bash
@@ -60,27 +58,35 @@ cd output && make setup && make run
 
 ## Grammar Highlights
 ```intent
-# Auth entity (v0.3.1)
-auth entity User:
-    id: uuid @primary @default(uuid)
-    email: email @unique
-    password_hash: string
-
-# Policy with @auth subject
-policy AdminOnly:
-    subject: @auth
-    require subject.role == "admin"
-
-# Structured action
-@api POST /login
-action login:
+# Explicit Mutate Create (v0.4)
+action signup:
     input:
         email: email
-        password: string
+        password: string @map(password_hash, hash)
     process:
-        derive user = select User where email == input.email
-        derive token = system jwt.create(user.email)
-    output: User(id, token)
+        mutate User:
+            set email = input.email
+            set password_hash = input.password
+    output:
+        User(id, email)
+
+# Explicit Mutate Update (v0.4)
+action cancel_order:
+    input:
+        id: uuid
+    process:
+        mutate Order where id == input.id:
+            set status = "cancelled"
+    output: 
+        Order(id, status)
+
+# Delete operation (v0.4)
+action delete_review:
+    input:
+        id: uuid
+    process:
+        delete Review where id == input.id
+    output: Review(id)
 ```
 
 ## Next Steps / Roadmap

@@ -420,7 +420,26 @@ fn validate_expression(
         }
         Expression::FieldAccess { entity, field } => {
             if entity == "subject" {
-                // 'subject' is a special keyword allowed in policy expressions
+                // 'subject' refers to the auth entity or the specified subject in the policy
+                // For now, we mainly check if it's the auth entity
+                if let Some(auth_entity_name) = &ctx.auth_entity {
+                    if let Some(ent) = ctx.entities.get(auth_entity_name) {
+                        if !ent.fields.iter().any(|f| &f.name == field) {
+                            return Err(CompileError::validation_with_hint(
+                                format!("Field '{}' not found in auth entity '{}' (referenced via 'subject')", field, auth_entity_name),
+                                location.clone(),
+                                format!(
+                                    "Available fields: {:?}",
+                                    ent.fields.iter().map(|f| &f.name).collect::<Vec<_>>()
+                                ),
+                            ));
+                        }
+                        return Ok(());
+                    }
+                }
+                
+                // If it's a specific entity subject, validate that later or just allow for now
+                // if we don't have enough context in validate_expression
                 return Ok(());
             }
             // Check entity exists
@@ -592,5 +611,26 @@ action get_order:
         let file = crate::parser::parse_intent(source).unwrap();
         let result = validate(&file);
         assert!(result.is_ok(), "Error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_validate_policy_invalid_subject_field() {
+        let source = r#"
+auth entity User:
+    id: uuid @primary
+
+policy AdminOnly:
+    subject: @auth
+    require subject.role == "admin"
+"#;
+        let file = crate::parser::parse_intent(source).unwrap();
+        let result = validate(&file);
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            CompileError::ValidationError { message, .. } => {
+                assert!(message.contains("Field 'role' not found in auth entity 'User'"));
+            }
+            _ => panic!("Expected validation error"),
+        }
     }
 }

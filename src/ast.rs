@@ -389,24 +389,3 @@ impl Default for IntentFile {
         Self::new()
     }
 }
-
-impl FieldType {
-    /// Convert to Python type string
-    pub fn to_python_type(&self) -> String {
-        match self {
-            FieldType::String => "str".to_string(),
-            FieldType::Number => "float".to_string(),
-            FieldType::Boolean => "bool".to_string(),
-            FieldType::DateTime => "datetime".to_string(),
-            FieldType::Uuid => "UUID".to_string(),
-            FieldType::Email => "EmailStr".to_string(),
-            FieldType::Enum(values) => format!("Literal[{}]", values.iter().map(|v| format!("\"{}\"", v)).collect::<Vec<_>>().join(", ")),
-            FieldType::Reference(name) => name.clone(),
-            FieldType::Ref(name) => name.clone(),
-            FieldType::Array(inner) => format!("list[{}]", inner.to_python_type()),
-            FieldType::List(inner) => format!("list[{}]", inner.to_python_type()),
-            FieldType::Optional(inner) => format!("Optional[{}]", inner.to_python_type()),
-        }
-    }
-
-}

@@ -39,80 +39,87 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     let mut content = String::new();
     
     // Header
-    content.push_str("# Intent Compiler Generated Controller\n");
+    content.push_str("# Intent Compiler Generated Controller with Routes\n");
     content.push_str("# Generated automatically - do not edit\n\n");
-    content.push_str("from typing import Optional\n");
+    content.push_str("from typing import Optional, List\n");
+    content.push_str("from fastapi import APIRouter, Depends, HTTPException, status\n");
     content.push_str("from sqlalchemy.orm import Session\n\n");
+    content.push_str("from db.database import get_db\n");
     content.push_str(&format!("from db.models import {}Model\n", name));
-    content.push_str(&format!("from services.{}_service import {}_service\n\n\n", name_lower, name_lower));
+    content.push_str("from models import *\n");
+    content.push_str(&format!("from services.{}_service import {}_service\n", name_lower, name_lower));
+    content.push_str("from core.security import get_current_user_token, get_password_hash\n\n");
     
-    // Controller class
-    content.push_str(&format!("class {}Controller:\n", name));
-    content.push_str(&format!("    \"\"\"Controller for {} entity routes\"\"\"\n\n", name));
-    content.push_str(&format!("    service = {}_service\n\n", name_lower));
+    // Router definition
+    content.push_str(&format!("router = APIRouter(prefix=\"/{}s\", tags=[\"{}\"])\n\n\n", name_lower, name));
+
+    // CRUD methods as Routes
+    content.push_str(&generate_crud_routes(name, &name_lower, ast));
     
-    // CRUD methods
-    content.push_str(&generate_crud_controller_methods(name, &name_lower));
-    
-    // Action-specific methods
+    // Action methods as Routes
     for action in &ast.actions {
         if let Some(output) = &action.output {
             if output.entity == *name {
-                content.push_str(&generate_action_controller_method(action, name, ast));
+                content.push_str(&generate_action_route(action, name, ast));
             }
         }
     }
     
-    // Singleton instance
-    content.push_str(&format!("\n# Singleton instance\n"));
-    content.push_str(&format!("{}_controller = {}Controller()\n", name_lower, name));
-    
     content
 }
 
-fn generate_crud_controller_methods(name: &str, _name_lower: &str) -> String {
+fn generate_crud_routes(name: &str, name_lower: &str, ast: &IntentFile) -> String {
     let mut content = String::new();
     
-    // List
-    content.push_str(&format!("    async def list(self, db: Session, skip: int = 0, limit: int = 100) -> list[{}Model]:\n", name));
-    content.push_str("        \"\"\"List all records\"\"\"\n");
-    content.push_str("        return self.service.get_all(db, skip=skip, limit=limit)\n\n");
+    // Helper to check if an action already defines this route
+    let route_exists = |method: crate::ast::HttpMethod, path_to_check: &str| -> bool {
+        let name_plural = format!("{}s", name_lower);
+        ast.actions.iter().any(|a| {
+            a.decorators.iter().any(|d| {
+                if let Decorator::Api { method: m, path: p } = d {
+                    if *m != method { return false; }
+                    let p_clean = p.trim_matches('/');
+                    let check_clean = path_to_check.trim_matches('/');
+                    p_clean == check_clean || 
+                    p_clean == format!("{}/{}", name_plural, check_clean).trim_matches('/') ||
+                    p_clean == format!("{}/{}", name_lower, check_clean).trim_matches('/')
+                } else {
+                    false
+                }
+            })
+        })
+    };
+
+    // List Route
+    if !route_exists(crate::ast::HttpMethod::Get, "/") {
+        content.push_str(&format!("@router.get(\"/\", response_model=List[{0}])\n", name));
+        content.push_str(&format!("async def list_{0}s(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):\n", name_lower));
+        content.push_str(&format!("    \"\"\"List all {0}s\"\"\"\n", name_lower));
+        content.push_str(&format!("    return {0}_service.get_all(db, skip=skip, limit=limit)\n\n", name_lower));
+    }
     
-    // Get
-    content.push_str(&format!("    async def get(self, db: Session, id: str) -> Optional[{}Model]:\n", name));
-    content.push_str("        \"\"\"Get a record by ID\"\"\"\n");
-    content.push_str("        return self.service.get_by_id(db, id)\n\n");
-    
-    // Create
-    content.push_str(&format!("    async def create(self, db: Session, data) -> {}Model:\n", name));
-    content.push_str("        \"\"\"Create a new record\"\"\"\n");
-    content.push_str("        return self.service.create(db, data.model_dump())\n\n");
-    
-    // Update
-    content.push_str(&format!("    async def update(self, db: Session, id: str, data) -> Optional[{}Model]:\n", name));
-    content.push_str("        \"\"\"Update a record by ID\"\"\"\n");
-    content.push_str("        return self.service.update(db, id, data.model_dump())\n\n");
-    
-    // Delete
-    content.push_str("    async def delete(self, db: Session, id: str) -> dict:\n");
-    content.push_str("        \"\"\"Delete a record by ID\"\"\"\n");
-    content.push_str("        success = self.service.delete(db, id)\n");
-    content.push_str("        return {\"success\": success}\n\n");
+    // Get Route
+    if !route_exists(crate::ast::HttpMethod::Get, "/{id}") {
+        content.push_str(&format!("@router.get(\"/{{id}}\", response_model={0})\n", name));
+        content.push_str(&format!("async def get_{0}(id: str, db: Session = Depends(get_db)):\n", name_lower));
+        content.push_str(&format!("    \"\"\"Get {0} by ID\"\"\"\n", name));
+        content.push_str(&format!("    result = {0}_service.get_by_id(db, id)\n", name_lower));
+        content.push_str("    if not result:\n");
+        content.push_str(&format!("        raise HTTPException(status_code=404, detail=\"{} not found\")\n", name));
+        content.push_str("    return result\n\n");
+    }
     
     content
 }
 
-fn generate_action_controller_method(action: &Action, entity_name: &str, ast: &IntentFile) -> String {
+fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -> String {
     let mut content = String::new();
     let action_name = &action.name;
+    let entity_lower = entity_name.to_lowercase();
     
-    // Build parameters (match api.rs)
-    let mut params = Vec::new();
-    let mut call_params = Vec::new();
-
-    // Get API decorator for path params
+    // Get API info
     let default_path = "/".to_string();
-    let (_, path) = action.decorators.iter().find_map(|d| {
+    let (method, path) = action.decorators.iter().find_map(|d| {
         if let Decorator::Api { method, path } = d {
             Some((method, path))
         } else {
@@ -120,79 +127,82 @@ fn generate_action_controller_method(action: &Action, entity_name: &str, ast: &I
         }
     }).unwrap_or((&crate::ast::HttpMethod::Get, &default_path));
 
+    let method_str = format!("{:?}", method).to_lowercase();
+    
+    // Strip entity prefix from path if present (e.g. /users/signup -> /signup because router has /users prefix)
+    let entity_prefix = format!("/{}s", entity_lower);
+    let entity_prefix_single = format!("/{}", entity_lower);
+    let mut relative_path = path.clone();
+    if relative_path.starts_with(&entity_prefix) {
+        relative_path = relative_path[entity_prefix.len()..].to_string();
+    } else if relative_path.starts_with(&entity_prefix_single) {
+        relative_path = relative_path[entity_prefix_single.len()..].to_string();
+    }
+    
+    if relative_path.is_empty() {
+        relative_path = "/".to_string();
+    }
+    if !relative_path.starts_with('/') {
+        relative_path = format!("/{}", relative_path);
+    }
+
+    // Response model
+    let response_model = if let Some(output) = &action.output {
+        if !output.fields.is_empty() {
+            format!("{}{}Response", entity_name, crate::codegen::python::models::to_pascal_case(action_name))
+        } else {
+            entity_name.to_string()
+        }
+    } else {
+        "dict".to_string()
+    };
+
+    content.push_str(&format!("@router.{}(\"{}\", response_model={})\n", method_str, relative_path, response_model));
+    
+    // Build parameters
+    let mut params = Vec::new();
+    let mut call_params = Vec::new();
+
     for segment in path.split('/') {
         if segment.starts_with('{') && segment.ends_with('}') {
             let param_name = &segment[1..segment.len()-1];
-            params.push(param_name.to_string());
+            params.push(format!("{}: str", param_name));
             call_params.push(param_name.to_string());
         }
     }
 
-    // Add data if applicable
-    let has_api = action.decorators.iter().any(|d| matches!(d, Decorator::Api { .. }));
-    let method = action.decorators.iter().find_map(|d| {
-        if let Decorator::Api { method, .. } = d { Some(method) } else { None }
-    }).unwrap_or(&crate::ast::HttpMethod::Get);
-
-    if has_api && matches!(method, crate::ast::HttpMethod::Post | crate::ast::HttpMethod::Put | crate::ast::HttpMethod::Patch) {
-        params.push("data".to_string());
-        call_params.push("data".to_string());
-    } else if !has_api {
-        if let Some(input) = &action.input {
-            for field in &input.fields {
-                params.push(field.name.clone());
-                call_params.push(field.name.clone());
-            }
+    if matches!(method, crate::ast::HttpMethod::Post | crate::ast::HttpMethod::Put | crate::ast::HttpMethod::Patch) {
+        let has_input = action.input.as_ref().map(|i| !i.fields.is_empty()).unwrap_or(false);
+        if has_input {
+             let request_model = format!("{}Request", crate::codegen::python::models::to_pascal_case(action_name));
+             params.push(format!("data: {}", request_model));
+        } else {
+             params.push(format!("data: {}Create", entity_name));
         }
+        call_params.push("data".to_string());
     }
 
-    params.push("db: Session".to_string());
+    params.push("db: Session = Depends(get_db)".to_string());
     call_params.push("db".to_string());
 
     let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
     if requires_auth {
-        params.push("current_user".to_string());
+        params.push("current_user: dict = Depends(get_current_user_token)".to_string());
         call_params.push("current_user".to_string());
     }
 
-    let params_str = params.join(", ");
-    let call_params_str = call_params.join(", ");
+    content.push_str(&format!("async def {}({}):\n", action_name, params.join(", ")));
+    content.push_str(&format!("    \"\"\"Handle {} action\"\"\"\n", action_name));
 
-    // Check return type based on action
-    let has_find = action.process.as_ref().map(|p| {
-        p.derives.iter().any(|d| {
-            matches!(&d.value, crate::ast::DeriveValue::Select { .. })
-        })
-    }).unwrap_or(false);
-    
-    // Determine return type
-    let returns_list = if matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{') {
-        true
-    } else {
-        false
-    };
-
-    if has_find {
-        content.push_str(&format!("    async def {}(self, {}) -> dict:\n", action_name, params_str));
-    } else if returns_list {
-        content.push_str(&format!("    async def {}(self, {}) -> list[{}Model]:\n", action_name, params_str, entity_name));
-    } else {
-        content.push_str(&format!("    async def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));
-    }
-    
-    content.push_str(&format!("        \"\"\"Handle {} action\"\"\"\n", action_name));
-
-    // Policy Check (Prefix)
-    // For GET/DELETE we check before. For POST we check after creating but before committing?
-    // Actually, in the new flow, the Service handles creation.
-    // So the Controller should probably check PRE-conditions.
+    // Policy Check
     let policy_check = generate_policy_enforcement(action, ast, "None").unwrap_or_default();
     content.push_str(&policy_check);
 
-    content.push_str(&format!("        return self.service.{}({})\n\n", action_name, call_params_str));
+    content.push_str(&format!("    return {0}_service.{1}({2})\n\n", entity_lower, action_name, call_params.join(", ")));
     
     content
 }
+
 
 fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &str) -> CompileResult<String> {
     let mut content = String::new();
@@ -224,8 +234,8 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
                     &format!(", resource={}", target_var)
                 };
 
-                content.push_str(&format!("        # Enforce policy: {}\n", name));
-                content.push_str(&format!("        {}(user=current_user{})\n", func_name, resource_arg));
+                content.push_str(&format!("    # Enforce policy: {}\n", name));
+                content.push_str(&format!("    {}(user=current_user{})\n", func_name, resource_arg));
             }
         }
     }
@@ -241,15 +251,15 @@ fn generate_controllers_init(ast: &IntentFile) -> String {
     for entity in &ast.entities {
         let name_lower = entity.name.to_lowercase();
         content.push_str(&format!(
-            "from controllers.{}_controller import {}Controller, {}_controller\n",
-            name_lower, entity.name, name_lower
+            "from controllers.{}_controller import router as {}_router\n",
+            name_lower, name_lower
         ));
     }
     
     content.push_str("\n__all__ = [\n");
     for entity in &ast.entities {
-        content.push_str(&format!("    \"{}Controller\",\n", entity.name));
-        content.push_str(&format!("    \"{}_controller\",\n", entity.name.to_lowercase()));
+        let name_lower = entity.name.to_lowercase();
+        content.push_str(&format!("    \"{}_router\",\n", name_lower));
     }
     content.push_str("]\n");
     

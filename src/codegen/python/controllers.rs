@@ -58,7 +58,7 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     for action in &ast.actions {
         if let Some(output) = &action.output {
             if output.entity == *name {
-                content.push_str(&generate_action_controller_method(action, name));
+                content.push_str(&generate_action_controller_method(action, name, ast));
             }
         }
     }
@@ -102,18 +102,62 @@ fn generate_crud_controller_methods(name: &str, _name_lower: &str) -> String {
     content
 }
 
-fn generate_action_controller_method(action: &Action, entity_name: &str) -> String {
+fn generate_action_controller_method(action: &Action, entity_name: &str, ast: &IntentFile) -> String {
     let mut content = String::new();
     let action_name = &action.name;
     
-    // Get HTTP method and check if auth required
-    let mut _has_auth = false;
-    for decorator in &action.decorators {
-        if matches!(decorator, Decorator::Auth { .. }) {
-            _has_auth = true;
+    // Build parameters (match api.rs)
+    let mut params = Vec::new();
+    let mut call_params = Vec::new();
+
+    // Get API decorator for path params
+    let default_path = "/".to_string();
+    let (_, path) = action.decorators.iter().find_map(|d| {
+        if let Decorator::Api { method, path } = d {
+            Some((method, path))
+        } else {
+            None
+        }
+    }).unwrap_or((&crate::ast::HttpMethod::Get, &default_path));
+
+    for segment in path.split('/') {
+        if segment.starts_with('{') && segment.ends_with('}') {
+            let param_name = &segment[1..segment.len()-1];
+            params.push(param_name.to_string());
+            call_params.push(param_name.to_string());
         }
     }
-    
+
+    // Add data if applicable
+    let has_api = action.decorators.iter().any(|d| matches!(d, Decorator::Api { .. }));
+    let method = action.decorators.iter().find_map(|d| {
+        if let Decorator::Api { method, .. } = d { Some(method) } else { None }
+    }).unwrap_or(&crate::ast::HttpMethod::Get);
+
+    if has_api && matches!(method, crate::ast::HttpMethod::Post | crate::ast::HttpMethod::Put | crate::ast::HttpMethod::Patch) {
+        params.push("data".to_string());
+        call_params.push("data".to_string());
+    } else if !has_api {
+        if let Some(input) = &action.input {
+            for field in &input.fields {
+                params.push(field.name.clone());
+                call_params.push(field.name.clone());
+            }
+        }
+    }
+
+    params.push("db: Session".to_string());
+    call_params.push("db".to_string());
+
+    let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
+    if requires_auth {
+        params.push("current_user".to_string());
+        call_params.push("current_user".to_string());
+    }
+
+    let params_str = params.join(", ");
+    let call_params_str = call_params.join(", ");
+
     // Check return type based on action
     let has_find = action.process.as_ref().map(|p| {
         p.derives.iter().any(|d| {
@@ -121,19 +165,72 @@ fn generate_action_controller_method(action: &Action, entity_name: &str) -> Stri
         })
     }).unwrap_or(false);
     
-    if has_find {
-        // Login-style action returns dict
-        content.push_str(&format!("    async def {}(self, db: Session, data) -> dict:\n", action_name));
-        content.push_str(&format!("        \"\"\"Handle {} action\"\"\"\n", action_name));
-        content.push_str(&format!("        return self.service.{}(db, data)\n\n", action_name));
+    // Determine return type
+    let returns_list = if matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{') {
+        true
     } else {
-        // Create-style action returns model
-        content.push_str(&format!("    async def {}(self, db: Session, data) -> {}Model:\n", action_name, entity_name));
-        content.push_str(&format!("        \"\"\"Handle {} action\"\"\"\n", action_name));
-        content.push_str(&format!("        return self.service.{}(db, data)\n\n", action_name));
+        false
+    };
+
+    if has_find {
+        content.push_str(&format!("    async def {}(self, {}) -> dict:\n", action_name, params_str));
+    } else if returns_list {
+        content.push_str(&format!("    async def {}(self, {}) -> list[{}Model]:\n", action_name, params_str, entity_name));
+    } else {
+        content.push_str(&format!("    async def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));
     }
     
+    content.push_str(&format!("        \"\"\"Handle {} action\"\"\"\n", action_name));
+
+    // Policy Check (Prefix)
+    // For GET/DELETE we check before. For POST we check after creating but before committing?
+    // Actually, in the new flow, the Service handles creation.
+    // So the Controller should probably check PRE-conditions.
+    let policy_check = generate_policy_enforcement(action, ast, "None").unwrap_or_default();
+    content.push_str(&policy_check);
+
+    content.push_str(&format!("        return self.service.{}({})\n\n", action_name, call_params_str));
+    
     content
+}
+
+fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &str) -> CompileResult<String> {
+    let mut content = String::new();
+    
+    for decorator in &action.decorators {
+        if let Decorator::Policy(name) = decorator {
+            let policy = if name.contains('.') {
+                let parts: Vec<&str> = name.split('.').collect();
+                let entity_name = parts[0];
+                let policy_name = parts[1];
+                
+                ast.find_entity(entity_name)
+                    .and_then(|e| e.policies.iter().find(|p| p.name == policy_name))
+            } else {
+                ast.policies.iter().find(|p| p.name == *name)
+            };
+
+            if let Some(_p) = policy {
+                 let func_name = if name.contains('.') {
+                    let parts: Vec<&str> = name.split('.').collect();
+                    format!("check_{}_{}", parts[0], parts[1])
+                } else {
+                    format!("check_{}", name)
+                };
+
+                let resource_arg = if target_var == "None" {
+                    ""
+                } else {
+                    &format!(", resource={}", target_var)
+                };
+
+                content.push_str(&format!("        # Enforce policy: {}\n", name));
+                content.push_str(&format!("        {}(user=current_user{})\n", func_name, resource_arg));
+            }
+        }
+    }
+    
+    Ok(content)
 }
 
 fn generate_controllers_init(ast: &IntentFile) -> String {

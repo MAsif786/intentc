@@ -107,7 +107,52 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
     let mut content = String::new();
     let action_name = &action.name;
     
-    // Check if this is a  select-based action (login-style)
+    // Build parameters (match controllers.rs)
+    let mut params = Vec::new();
+
+    // Get API decorator for path params
+    let default_path = "/".to_string();
+    let (_, path) = action.decorators.iter().find_map(|d| {
+        if let Decorator::Api { method, path } = d {
+            Some((method, path))
+        } else {
+            None
+        }
+    }).unwrap_or((&crate::ast::HttpMethod::Get, &default_path));
+
+    for segment in path.split('/') {
+        if segment.starts_with('{') && segment.ends_with('}') {
+            let param_name = &segment[1..segment.len()-1];
+            params.push(param_name.to_string());
+        }
+    }
+
+    // Add data if applicable
+    let has_api = action.decorators.iter().any(|d| matches!(d, Decorator::Api { .. }));
+    let method = action.decorators.iter().find_map(|d| {
+        if let Decorator::Api { method, .. } = d { Some(method) } else { None }
+    }).unwrap_or(&crate::ast::HttpMethod::Get);
+
+    if has_api && matches!(method, crate::ast::HttpMethod::Post | crate::ast::HttpMethod::Put | crate::ast::HttpMethod::Patch) {
+        params.push("data".to_string());
+    } else if !has_api {
+        if let Some(input) = &action.input {
+            for field in &input.fields {
+                params.push(field.name.clone());
+            }
+        }
+    }
+
+    params.push("db: Session".to_string());
+
+    let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
+    if requires_auth {
+        params.push("current_user".to_string());
+    }
+
+    let params_str = params.join(", ");
+
+    // Check if this is a select-based action (login-style)
     let has_find = action.process.as_ref().map(|p| {
         p.derives.iter().any(|d| {
             matches!(&d.value, DeriveValue::Select { .. })
@@ -123,26 +168,27 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
     
     if has_find {
         // Login-style method
-        content.push_str(&format!("    def {}(self, db: Session, data) -> dict:\n", action_name));
+        content.push_str(&format!("    def {}(self, {}) -> dict:\n", action_name, params_str));
         content.push_str(&format!("        \"\"\"Business logic for {}\"\"\"\n", action_name));
         
-        // Process derives
+        // Process derives in order
         if let Some(process) = &action.process {
             for derive in &process.derives {
                 match &derive.value {
-                    DeriveValue::Select { entity, .. } => {
-                        // Simplified: just get first record
-                        content.push_str(&format!("        {} = db.query({}Model).first()\n", derive.name, entity));
+                    DeriveValue::Select { entity, predicate } => {
+                        let py_code = select_to_python(entity, predicate);
+                        content.push_str(&format!("        {} = {}\n", derive.name, py_code));
                         content.push_str(&format!("        if not {}:\n", derive.name));
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Not found\")\n");
                     }
-                    DeriveValue::Compute { function, args: _ } if function == "verify_hash" => {
-                        // Simplified verify hash
-                        content.push_str("        if not verify_password(data.password, user.password_hash):\n");
+                    DeriveValue::Compute { function, args } if function == "verify_hash" => {
+                        let py_code = compute_to_python(function, args);
+                        content.push_str(&format!("        if not {}:\n", py_code));
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Invalid credentials\")\n");
                     }
-                    DeriveValue::SystemCall { namespace, capability, .. } if namespace == "jwt" && capability == "create" => {
-                        content.push_str(&format!("        {} = create_access_token(data={{\"sub\": user.email}})\n", derive.name));
+                    DeriveValue::SystemCall { namespace, capability, args } => {
+                        let py_code = system_call_to_python(namespace, capability, args);
+                        content.push_str(&format!("        {} = {}\n", derive.name, py_code));
                     }
                     _ => {}
                 }
@@ -160,24 +206,29 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                 if is_derived {
                     content.push_str(&format!("            \"{}\": {},\n", field, field));
                 } else {
-                    content.push_str(&format!("            \"{}\": user.{},\n", field, field));
+                    // Assume it's from the found entity (first derive with select)
+                    let found_var = action.process.as_ref()
+                        .and_then(|p| p.derives.iter().find(|d| {
+                            matches!(&d.value, DeriveValue::Select { .. })
+                        }))
+                        .map(|d| d.name.clone())
+                        .unwrap_or_else(|| "user".to_string());
+                    content.push_str(&format!("            \"{}\": {}.{},\n", field, found_var, field));
                 }
             }
         }
         content.push_str("        }\n\n");
     } else if has_hash {
         // Signup-style method
-        content.push_str(&format!("    def {}(self, db: Session, data) -> {}Model:\n", action_name, entity_name));
+        content.push_str(&format!("    def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));
         content.push_str(&format!("        \"\"\"Business logic for {}\"\"\"\n", action_name));
         content.push_str("        data_dict = data.model_dump()\n");
         
-        // Process password hashing
         if let Some(input) = &action.input {
             for param in &input.fields {
                 for dec in &param.decorators {
                     if let Decorator::Map { target, transform } = dec {
                         if matches!(transform, MapTransform::Hash) {
-                            content.push_str(&format!("        # Hash {} -> {}\n", param.name, target));
                             content.push_str(&format!("        data_dict['{}'] = get_password_hash(data_dict.pop('{}'))\n", target, param.name));
                         }
                     }
@@ -186,6 +237,32 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         }
         
         content.push_str("        return self.repo.create(db, data_dict)\n\n");
+    } else {
+        // Generic action (like create_product or list_products)
+        // Determine return type
+        let returns_list = if matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{') {
+            true
+        } else {
+            false
+        };
+
+        if returns_list {
+            content.push_str(&format!("    def {}(self, {}) -> list[{}Model]:\n", action_name, params_str, entity_name));
+        } else {
+            content.push_str(&format!("    def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));
+        }
+        content.push_str(&format!("        \"\"\"Business logic for {}\"\"\"\n", action_name));
+
+        if matches!(method, crate::ast::HttpMethod::Post) {
+             content.push_str("        return self.repo.create(db, data.model_dump())\n\n");
+        } else if matches!(method, crate::ast::HttpMethod::Get) && path.contains('{') {
+             content.push_str("        result = self.repo.get_by_id(db, id)\n");
+             content.push_str("        if not result:\n");
+             content.push_str("            raise HTTPException(status_code=404, detail=\"Not found\")\n");
+             content.push_str("        return result\n\n");
+        } else {
+             content.push_str("        return self.repo.get_all(db)\n\n");
+        }
     }
     
     content
@@ -212,4 +289,102 @@ fn generate_services_init(ast: &IntentFile) -> String {
     content.push_str("]\n");
     
     content
+}
+
+fn select_to_python(entity: &str, predicate: &crate::ast::Predicate) -> String {
+    use crate::ast::{FieldReference, CompareOp};
+    
+    let right_str = match &predicate.value {
+        FieldReference::InputField(name) => format!("data.{}", name),
+        FieldReference::DerivedField { name, field } => format!("{}.{}", name, field),
+        FieldReference::Literal(lit) => match lit {
+            crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+            crate::ast::LiteralValue::Number(n) => n.to_string(),
+            crate::ast::LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    };
+    
+    let op_str = match predicate.operator {
+        CompareOp::Equal => "==",
+        CompareOp::NotEqual => "!=",
+        CompareOp::Less => "<",
+        CompareOp::Greater => ">",
+    };
+    
+    let filter_field = match &predicate.field {
+        FieldReference::InputField(name) | FieldReference::DerivedField { field: name, .. } => name.clone(),
+        _ => "id".to_string(),
+    };
+    
+    format!("db.query({}Model).filter({}Model.{} {} {}).first()", entity, entity, filter_field, op_str, right_str)
+}
+
+fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg]) -> String {
+    use crate::ast::FunctionArg;
+    
+    let args_str: Vec<String> = args.iter().map(|arg| match arg {
+        FunctionArg::TypeName(s) => s.clone(),
+        FunctionArg::Identifier(s) => format!("data.{}", s),
+        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Literal(lit) => match lit {
+            crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+            crate::ast::LiteralValue::Number(n) => n.to_string(),
+            crate::ast::LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    }).collect();
+    
+    match function {
+        "verify_hash" => {
+            if args.len() >= 2 {
+                format!("verify_password({}, {})", args_str[0], args_str[1])
+            } else {
+                "False".to_string()
+            }
+        }
+        "slugify" => {
+            if !args.is_empty() {
+                format!("\"{}\".lower().replace(' ', '-')", args_str[0])
+            } else {
+                "\"\"".to_string()
+            }
+        }
+        _ => {
+            format!("{}({})", function, args_str.join(", "))
+        }
+    }
+}
+
+fn system_call_to_python(namespace: &str, capability: &str, args: &[crate::ast::FunctionArg]) -> String {
+    use crate::ast::FunctionArg;
+    
+    let args_str: Vec<String> = args.iter().map(|arg| match arg {
+        FunctionArg::TypeName(s) => s.clone(),
+        FunctionArg::Identifier(s) => format!("data.{}", s),
+        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Literal(lit) => match lit {
+            crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+            crate::ast::LiteralValue::Number(n) => n.to_string(),
+            crate::ast::LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+    }).collect();
+    
+    match (namespace, capability) {
+        ("jwt", "create") => {
+            if !args.is_empty() {
+                format!("create_access_token(data={{\"sub\": {}}})", args_str[0])
+            } else {
+                "create_access_token(data={})".to_string()
+            }
+        }
+        ("jwt", "verify") => {
+            if !args.is_empty() {
+                format!("verify_token({})", args_str[0])
+            } else {
+                "verify_token()".to_string()
+            }
+        }
+        _ => {
+            format!("{}_{}({})", namespace, capability, args_str.join(", "))
+        }
+    }
 }

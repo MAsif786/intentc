@@ -139,16 +139,12 @@ class {name}Repository(BaseRepository[{name}Model]):
     _instance: Optional['{name}Repository'] = None
     
     def __new__(cls):
-        if cls._instance is None:
+        if not cls._instance:
             cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
         return cls._instance
     
     def __init__(self):
-        if self._initialized:
-            return
         super().__init__({name}Model)
-        self._initialized = True
 
 
 # Singleton instance

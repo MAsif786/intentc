@@ -127,7 +127,7 @@ pub fn validate(file: &IntentFile) -> CompileResult<ValidationContext> {
 
     // Validate global policies
     for policy in &file.policies {
-        if let Err(e) = validate_expression(&policy.require, &ctx, &policy.location) {
+        if let Err(e) = validate_policy(policy, &ctx) {
             errors.push(e);
         }
     }
@@ -135,7 +135,7 @@ pub fn validate(file: &IntentFile) -> CompileResult<ValidationContext> {
     // Validate entity-scoped policies
     for entity in &file.entities {
         for policy in &entity.policies {
-            if let Err(e) = validate_expression(&policy.require, &ctx, &policy.location) {
+            if let Err(e) = validate_policy(policy, &ctx) {
                 errors.push(e);
             }
         }
@@ -483,6 +483,19 @@ fn validate_consequence(
     Ok(())
 }
 
+/// Validate a policy definition
+fn validate_policy(policy: &Policy, ctx: &ValidationContext) -> CompileResult<()> {
+    if policy.subject != "@auth" && !ctx.entities.contains_key(&policy.subject) {
+        return Err(CompileError::validation_with_hint(
+            format!("Unknown subject in policy '{}': {}", policy.name, policy.subject),
+            policy.location.clone(),
+            format!("Subject must be '@auth' or a defined entity name. Available entities: {:?}", ctx.entities.keys().collect::<Vec<_>>()),
+        ));
+    }
+    validate_expression(&policy.require, ctx, &policy.location)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +562,35 @@ action private_action:
             }
             _ => panic!("Expected validation error"),
         }
+    }
+
+    #[test]
+    fn test_validate_nested_policy() {
+        let source = r#"
+entity User:
+    id: uuid @primary
+    role: string
+
+auth entity UserAuth:
+    id: uuid @primary
+
+entity Order:
+    id: uuid @primary
+    user_id: uuid
+    policy OwnsOrder:
+        subject: @auth
+        require Order.user_id == subject.id
+
+@api GET /orders/{id}
+@auth
+@policy(Order.OwnsOrder)
+action get_order:
+    input:
+        id: uuid
+    output: Order(id)
+"#;
+        let file = crate::parser::parse_intent(source).unwrap();
+        let result = validate(&file);
+        assert!(result.is_ok(), "Error: {:?}", result.err());
     }
 }

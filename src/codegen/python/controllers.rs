@@ -49,13 +49,7 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     // Controller class
     content.push_str(&format!("class {}Controller:\n", name));
     content.push_str(&format!("    \"\"\"Controller for {} entity routes\"\"\"\n\n", name));
-    content.push_str(&format!("    _instance: Optional['{}Controller'] = None\n\n", name));
-    content.push_str("    def __new__(cls):\n");
-    content.push_str("        if not cls._instance:\n");
-    content.push_str("            cls._instance = super().__new__(cls)\n");
-    content.push_str("        return cls._instance\n\n");
-    content.push_str("    def __init__(self):\n");
-    content.push_str(&format!("        self.service = {}_service\n\n", name_lower));
+    content.push_str(&format!("    service = {}_service\n\n", name_lower));
     
     // CRUD methods
     content.push_str(&generate_crud_controller_methods(name, &name_lower));

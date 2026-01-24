@@ -51,13 +51,7 @@ fn generate_entity_service(entity: &crate::ast::Entity, ast: &IntentFile) -> Str
     // Service class
     content.push_str(&format!("class {}Service:\n", name));
     content.push_str(&format!("    \"\"\"Service for {} entity with business logic\"\"\"\n\n", name));
-    content.push_str(&format!("    _instance: Optional['{}Service'] = None\n\n", name));
-    content.push_str("    def __new__(cls):\n");
-    content.push_str("        if not cls._instance:\n");
-    content.push_str("            cls._instance = super().__new__(cls)\n");
-    content.push_str("        return cls._instance\n\n");
-    content.push_str("    def __init__(self):\n");
-    content.push_str(&format!("        self.repo = {}_repository\n\n", name_lower));
+    content.push_str(&format!("    repo = {}_repository\n\n", name_lower));
     
     // Generate CRUD methods
     content.push_str(&generate_crud_methods(name, &name_lower));

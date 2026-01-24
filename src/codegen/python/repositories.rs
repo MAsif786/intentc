@@ -136,13 +136,6 @@ from repositories.base import BaseRepository
 class {name}Repository(BaseRepository[{name}Model]):
     """Repository for {name} entity"""
     
-    _instance: Optional['{name}Repository'] = None
-    
-    def __new__(cls):
-        if not cls._instance:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
     def __init__(self):
         super().__init__({name}Model)
 

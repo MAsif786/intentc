@@ -325,11 +325,6 @@ fn generate_repository_tests(ast: &IntentFile) -> CompileResult<String> {
         content.push_str(&format!("class Test{}:\n", repo_class));
         content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", repo_class));
         
-        content.push_str("    def test_repository_is_singleton(self):\n");
-        content.push_str(&format!("        repo1 = {}()\n", repo_class));
-        content.push_str(&format!("        repo2 = {}()\n", repo_class));
-        content.push_str("        assert repo1 is repo2\n\n");
-
         content.push_str("    def test_repository_get_all(self, db):\n");
         content.push_str(&format!("        repo = {}()\n", repo_class));
         content.push_str("        results = repo.get_all(db)\n");
@@ -352,11 +347,6 @@ fn generate_service_tests(ast: &IntentFile) -> CompileResult<String> {
         content.push_str(&format!("class Test{}:\n", service_class));
         content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", service_class));
         
-        content.push_str("    def test_service_is_singleton(self):\n");
-        content.push_str(&format!("        service1 = {}()\n", service_class));
-        content.push_str(&format!("        service2 = {}()\n", service_class));
-        content.push_str("        assert service1 is service2\n\n");
-
         content.push_str("    def test_service_get_all(self, db):\n");
         content.push_str(&format!("        service = {}()\n", service_class));
         content.push_str("        results = service.get_all(db)\n");
@@ -378,11 +368,6 @@ fn generate_controller_tests(ast: &IntentFile) -> CompileResult<String> {
         let controller_class = format!("{}Controller", entity.name);
         content.push_str(&format!("class Test{}:\n", controller_class));
         content.push_str(&format!("    \"\"\"Tests for {} singleton\"\"\"\n\n", controller_class));
-        
-        content.push_str("    def test_controller_is_singleton(self):\n");
-        content.push_str(&format!("        ctrl1 = {}()\n", controller_class));
-        content.push_str(&format!("        ctrl2 = {}()\n", controller_class));
-        content.push_str("        assert ctrl1 is ctrl2\n\n");
     }
 
     Ok(content)

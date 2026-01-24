@@ -106,10 +106,25 @@ input_field = {
 // Process section: derive statements
 process_section = { 
     indent ~ "process:" ~ nl ~ 
-    derive_statements 
+    (process_step | indent ~ indent ~ COMMENT? ~ nl | nl)*
 }
 
-derive_statements = { derive_statement* }
+process_step = { derive_statement | mutate_block | delete_statement }
+
+mutate_block = {
+    indent ~ indent ~ "mutate" ~ ws+ ~ type_name ~ (ws+ ~ "where" ~ ws+ ~ predicate)? ~ ":" ~ nl ~
+    mutate_setters
+}
+
+mutate_setters = { (mutate_setter | indent ~ indent ~ indent ~ COMMENT? ~ nl | nl)* }
+
+mutate_setter = {
+    indent ~ indent ~ indent ~ "set" ~ ws+ ~ field_name ~ ws* ~ "=" ~ ws* ~ derive_expr ~ nl
+}
+
+delete_statement = {
+    indent ~ indent ~ "delete" ~ ws+ ~ type_name ~ ws+ ~ "where" ~ ws+ ~ predicate ~ nl
+}
 
 derive_statement = { 
     indent ~ indent ~ "derive" ~ ws+ ~ identifier ~ ws* ~ "=" ~ ws* ~ derive_expr ~ nl 
@@ -142,7 +157,7 @@ path_segment = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // Output section: entity projection
 output_section = { 
-    indent ~ "output:" ~ ws+ ~ type_projection ~ nl 
+    indent ~ "output:" ~ ( (ws* ~ nl ~ indent ~ indent ~ type_projection ~ nl) | (ws+ ~ type_projection ~ nl) )
 }
 
 type_projection = { type_name ~ "(" ~ ws* ~ projection_fields ~ ws* ~ ")" }

@@ -433,19 +433,27 @@ fn parse_input_field(pair: pest::iterators::Pair<Rule>) -> CompileResult<ActionP
 
 /// Parse process section
 fn parse_process_section(pair: pest::iterators::Pair<Rule>) -> CompileResult<ProcessSection> {
-    let mut derives = Vec::new();
+    let mut steps = Vec::new();
 
     for inner in pair.into_inner() {
-        if inner.as_rule() == Rule::derive_statements {
-            for stmt in inner.into_inner() {
-                if stmt.as_rule() == Rule::derive_statement {
-                    derives.push(parse_derive_statement(stmt)?);
-                }
-            }
+        if inner.as_rule() == Rule::process_step {
+             let inner_step = inner.into_inner().next().unwrap();
+             match inner_step.as_rule() {
+                 Rule::derive_statement => {
+                     steps.push(ProcessStep::Derive(parse_derive_statement(inner_step)?));
+                 }
+                 Rule::mutate_block => {
+                     steps.push(ProcessStep::Mutate(parse_mutate_block(inner_step)?));
+                 }
+                 Rule::delete_statement => {
+                     steps.push(ProcessStep::Delete(parse_delete_statement(inner_step)?));
+                 }
+                 _ => {}
+             }
         }
     }
 
-    Ok(ProcessSection { derives })
+    Ok(ProcessSection { steps })
 }
 
 /// Parse derive statement
@@ -471,6 +479,69 @@ fn parse_derive_statement(pair: pest::iterators::Pair<Rule>) -> CompileResult<De
     }
 
     Ok(DeriveStatement { name, value, location })
+}
+
+/// Parse mutate block
+fn parse_mutate_block(pair: pest::iterators::Pair<Rule>) -> CompileResult<MutateBlock> {
+    let location = get_location(&pair);
+    let mut entity = String::new();
+    let mut predicate = None;
+    let mut setters = Vec::new();
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_name => entity = inner.as_str().to_string(),
+            Rule::predicate => predicate = Some(parse_predicate(inner)?),
+            Rule::mutate_setters => {
+                for setter in inner.into_inner() {
+                    if setter.as_rule() == Rule::mutate_setter {
+                        setters.push(parse_mutate_setter(setter)?);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(MutateBlock { entity, predicate, setters, location })
+}
+
+/// Parse mutate setter
+fn parse_mutate_setter(pair: pest::iterators::Pair<Rule>) -> CompileResult<MutateSetter> {
+    let location = get_location(&pair);
+    let mut field = String::new();
+    let mut value = DeriveValue::Literal(LiteralValue::String(String::new()));
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::field_name => field = inner.as_str().to_string(),
+            Rule::derive_expr => value = parse_derive_expr(inner)?,
+            _ => {}
+        }
+    }
+
+    Ok(MutateSetter { field, value, location })
+}
+
+/// Parse delete statement
+fn parse_delete_statement(pair: pest::iterators::Pair<Rule>) -> CompileResult<DeleteStatement> {
+    let location = get_location(&pair);
+    let mut entity = String::new();
+    let mut predicate = Predicate {
+        field: FieldReference::InputField(String::new()),
+        operator: CompareOp::Equal,
+        value: FieldReference::InputField(String::new()),
+    };
+
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::type_name => entity = inner.as_str().to_string(),
+            Rule::predicate => predicate = parse_predicate(inner)?,
+            _ => {}
+        }
+    }
+
+    Ok(DeleteStatement { entity, predicate, location })
 }
 
 /// Parse derive expression (v0.3)

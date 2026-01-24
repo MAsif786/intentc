@@ -148,7 +148,7 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
     }
 
     // Response model
-    let response_model = if let Some(output) = &action.output {
+    let mut response_model = if let Some(output) = &action.output {
         if !output.fields.is_empty() {
             format!("{}{}Response", entity_name, crate::codegen::python::models::to_pascal_case(action_name))
         } else {
@@ -157,6 +157,12 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
     } else {
         "dict".to_string()
     };
+
+    // Determine if it should be a list
+    let returns_list = matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{');
+    if returns_list && response_model != "dict" {
+        response_model = format!("List[{}]", response_model);
+    }
 
     content.push_str(&format!("@router.{}(\"{}\", response_model={})\n", method_str, relative_path, response_model));
     

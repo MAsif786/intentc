@@ -291,6 +291,12 @@ fn validate_action(action: &Action, ctx: &ValidationContext) -> CompileResult<()
         }
     }
 
+    // Validate process section
+    if let Some(process) = &action.process {
+        let input_fields: HashSet<String> = param_names.iter().map(|s| s.to_string()).collect();
+        validate_process(process, ctx, &action.location, &input_fields)?;
+    }
+
     // Validate decorators
     for decorator in &action.decorators {
         match decorator {
@@ -512,6 +518,137 @@ fn validate_policy(policy: &Policy, ctx: &ValidationContext) -> CompileResult<()
         ));
     }
     validate_expression(&policy.require, ctx, &policy.location)?;
+    Ok(())
+}
+
+/// Validate process section
+fn validate_process(
+    process: &ProcessSection,
+    ctx: &ValidationContext,
+    location: &SourceLocation,
+    input_fields: &HashSet<String>,
+) -> CompileResult<()> {
+    let mut scope = input_fields.clone();
+    // Implicit variables
+    scope.insert("current_user".to_string()); // Assuming available context
+
+    for step in &process.steps {
+        match step {
+            ProcessStep::Derive(d) => {
+                validate_derive(d, ctx, &scope)?;
+                scope.insert(d.name.clone());
+            }
+            ProcessStep::Mutate(m) => validate_mutate(m, ctx, &scope)?,
+            ProcessStep::Delete(d) => validate_delete(d, ctx, &scope)?,
+        }
+    }
+    Ok(())
+}
+
+fn validate_derive(derive: &DeriveStatement, ctx: &ValidationContext, scope: &HashSet<String>) -> CompileResult<()> {
+    // Basic validation for derive expressions
+    match &derive.value {
+        DeriveValue::Select { entity, predicate } => {
+            if !ctx.entities.contains_key(entity) {
+                 return Err(CompileError::validation(
+                    format!("Unknown entity in select: {}", entity),
+                    derive.location.clone(),
+                ));
+            }
+            validate_predicate(predicate, ctx, scope, &derive.location)?;
+        }
+        DeriveValue::Compute { function: _, args } => {
+             for arg in args {
+                 validate_function_arg(arg, scope, &derive.location)?;
+             }
+        }
+        DeriveValue::SystemCall { namespace: _, capability: _, args } => {
+             for arg in args {
+                 validate_function_arg(arg, scope, &derive.location)?;
+             }
+        }
+        DeriveValue::Identifier(id) => {
+             // For simple identifier, check if it's in scope (unless dotted)
+             if !id.contains('.') && !scope.contains(id) {
+                  // Not a hard error in previous versions, but good to have
+             }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_mutate(mutate: &MutateBlock, ctx: &ValidationContext, scope: &HashSet<String>) -> CompileResult<()> {
+    // Check entity exists
+    let entity = ctx.entities.get(&mutate.entity).ok_or_else(|| {
+        CompileError::validation(
+            format!("Unknown entity in mutate: {}", mutate.entity),
+            mutate.location.clone(),
+        )
+    })?;
+
+    // Validate predicate if present (Update mode)
+    if let Some(predicate) = &mutate.predicate {
+        validate_predicate(predicate, ctx, scope, &mutate.location)?;
+    }
+
+    for setter in &mutate.setters {
+        // Check field exists
+        let field = entity.fields.iter().find(|f| f.name == setter.field).ok_or_else(|| {
+            CompileError::validation_with_hint(
+                format!("Unknown field '{}' in entity '{}'", setter.field, mutate.entity),
+                setter.location.clone(),
+                format!("Available fields: {:?}", entity.fields.iter().map(|f| &f.name).collect::<Vec<_>>()),
+            )
+        })?;
+
+        // Check for read-only fields (@primary, @auto)
+        if field.decorators.contains(&Decorator::Primary) {
+             return Err(CompileError::validation(
+                format!("Cannot mutate primary key field '{}'", setter.field),
+                setter.location.clone(),
+            ));
+        }
+        if field.decorators.contains(&Decorator::Auto) {
+             return Err(CompileError::validation(
+                format!("Cannot mutate auto-generated field '{}'", setter.field),
+                setter.location.clone(),
+            ));
+        }
+
+        // Validate value expression (context/scope check)
+        // Simplified check: if it's an identifier, must be in scope
+    }
+
+    Ok(())
+}
+
+fn validate_delete(delete: &DeleteStatement, ctx: &ValidationContext, scope: &HashSet<String>) -> CompileResult<()> {
+    if !ctx.entities.contains_key(&delete.entity) {
+         return Err(CompileError::validation(
+            format!("Unknown entity in delete: {}", delete.entity),
+            delete.location.clone(),
+        ));
+    }
+    validate_predicate(&delete.predicate, ctx, scope, &delete.location)?;
+    Ok(())
+}
+
+fn validate_predicate(predicate: &Predicate, ctx: &ValidationContext, scope: &HashSet<String>, location: &SourceLocation) -> CompileResult<()> {
+    // Validate field references in predicate
+    // TODO: deeper validation of types
+    Ok(())
+}
+
+fn validate_function_arg(arg: &FunctionArg, scope: &HashSet<String>, location: &SourceLocation) -> CompileResult<()> {
+    match arg {
+        FunctionArg::Identifier(id) => {
+             if !scope.contains(id) {
+                  // Warn or Error?
+             }
+        }
+        _ => {}
+    }
     Ok(())
 }
 

@@ -155,7 +155,36 @@ pub struct InputSection {
 /// Process section for action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessSection {
-    pub derives: Vec<DeriveStatement>,
+    pub steps: Vec<ProcessStep>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProcessStep {
+    Derive(DeriveStatement),
+    Mutate(MutateBlock),
+    Delete(DeleteStatement),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutateBlock {
+    pub entity: String,
+    pub predicate: Option<Predicate>,
+    pub setters: Vec<MutateSetter>,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutateSetter {
+    pub field: String,
+    pub value: DeriveValue,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteStatement {
+    pub entity: String,
+    pub predicate: Predicate,
+    pub location: SourceLocation,
 }
 
 /// Derive statement in process section

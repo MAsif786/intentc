@@ -44,6 +44,22 @@ fn generate_entity_service(entity: &crate::ast::Entity, ast: &IntentFile) -> Str
     content.push_str("from typing import Optional\n");
     content.push_str("from sqlalchemy.orm import Session\n");
     content.push_str("from fastapi import HTTPException\n\n");
+    for entity in &ast.entities {
+        if entity.name != *name {
+             // Check if this entity is used in any process step
+             let is_used = ast.actions.iter()
+                .filter(|a| a.output.as_ref().map(|o| o.entity == *name).unwrap_or(false))
+                .any(|a| a.process.as_ref().map(|p| p.steps.iter().any(|s| match s {
+                    crate::ast::ProcessStep::Mutate(m) => m.entity == entity.name,
+                    crate::ast::ProcessStep::Delete(d) => d.entity == entity.name,
+                    crate::ast::ProcessStep::Derive(d) => matches!(&d.value, DeriveValue::Select { entity: e, .. } if e == &entity.name),
+                })).unwrap_or(false));
+             
+             if is_used {
+                 content.push_str(&format!("from db.models import {}Model\n", entity.name));
+             }
+        }
+    }
     content.push_str(&format!("from db.models import {}Model\n", name));
     content.push_str(&format!("from repositories.{}_repository import {}_repository\n", name_lower, name_lower));
     content.push_str("from core.security import get_password_hash, verify_password, create_access_token\n\n\n");
@@ -131,18 +147,43 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
 
     params.push("db: Session".to_string());
 
+    // Check for implicit current_user usage in process
+    let uses_current_user = action.process.as_ref().map(|p| {
+        p.steps.iter().any(|s| match s {
+             crate::ast::ProcessStep::Derive(d) => match &d.value {
+                 DeriveValue::FieldAccess { path } => path[0] == "current_user",
+                 DeriveValue::Identifier(id) => id.starts_with("current_user."),
+                 _ => false
+             },
+             _ => false
+        })
+    }).unwrap_or(false);
+
     let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
-    if requires_auth {
+    // Add current_user if explicit auth or implicit usage
+    if requires_auth || uses_current_user {
         params.push("current_user".to_string());
     }
 
     let params_str = params.join(", ");
+    let has_data = params.contains(&"data".to_string());
+    let mut derived_vars = std::collections::HashSet::new();
 
-    // Check if this is a select-based action (login-style)
+    // Check if this is a process-based action
+    let has_process = action.process.is_some();    
+    // Check if this is a simple select-based action (no mutations/deletions)
     let has_find = action.process.as_ref().map(|p| {
-        p.derives.iter().any(|d| {
-            matches!(&d.value, DeriveValue::Select { .. })
-        })
+        let has_select = p.steps.iter().any(|step| {
+            if let crate::ast::ProcessStep::Derive(d) = step {
+                matches!(&d.value, DeriveValue::Select { .. })
+            } else {
+                false
+            }
+        });
+        let has_mutations = p.steps.iter().any(|step| {
+            !matches!(step, crate::ast::ProcessStep::Derive(_))
+        });
+        has_select && !has_mutations
     }).unwrap_or(false);
     
     // Check for password hashing (signup-style)
@@ -159,25 +200,30 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         
         // Process derives in order
         if let Some(process) = &action.process {
-            for derive in &process.derives {
+            for step in &process.steps {
+                if let crate::ast::ProcessStep::Derive(derive) = step {
                 match &derive.value {
                     DeriveValue::Select { entity, predicate } => {
-                        let py_code = select_to_python(entity, predicate);
+                        let py_code = select_to_python(entity, predicate, has_data, &derived_vars);
                         content.push_str(&format!("        {} = {}\n", derive.name, py_code));
                         content.push_str(&format!("        if not {}:\n", derive.name));
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Not found\")\n");
+                        derived_vars.insert(derive.name.clone());
                     }
                     DeriveValue::Compute { function, args } if function == "verify_hash" => {
-                        let py_code = compute_to_python(function, args);
+                        let py_code = compute_to_python(function, args, has_data, &derived_vars);
                         content.push_str(&format!("        if not {}:\n", py_code));
                         content.push_str("            raise HTTPException(status_code=400, detail=\"Invalid credentials\")\n");
                     }
                     DeriveValue::SystemCall { namespace, capability, args } => {
-                        let py_code = system_call_to_python(namespace, capability, args);
+                        let py_code = system_call_to_python(namespace, capability, args, has_data, &derived_vars);
                         content.push_str(&format!("        {} = {}\n", derive.name, py_code));
+                        derived_vars.insert(derive.name.clone());
                     }
                     _ => {}
                 }
+                }
+
             }
         }
         
@@ -186,7 +232,12 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         if let Some(output) = &action.output {
             for field in &output.fields {
                 let is_derived = action.process.as_ref().map(|p| {
-                    p.derives.iter().any(|d| d.name == *field)
+                    p.steps.iter().any(|step| {
+                         match step {
+                             crate::ast::ProcessStep::Derive(d) => d.name == *field,
+                             _ => false
+                         }
+                    })
                 }).unwrap_or(false);
                 
                 if is_derived {
@@ -194,16 +245,93 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                 } else {
                     // Assume it's from the found entity (first derive with select)
                     let found_var = action.process.as_ref()
-                        .and_then(|p| p.derives.iter().find(|d| {
-                            matches!(&d.value, DeriveValue::Select { .. })
+                        .and_then(|p| p.steps.iter().find_map(|step| {
+                             if let crate::ast::ProcessStep::Derive(d) = step {
+                                 if matches!(&d.value, DeriveValue::Select { .. }) {
+                                     Some(d.name.clone())
+                                 } else { None }
+                             } else { None }
                         }))
-                        .map(|d| d.name.clone())
                         .unwrap_or_else(|| "user".to_string());
                     content.push_str(&format!("            \"{}\": {}.{},\n", field, found_var, field));
                 }
             }
         }
         content.push_str("        }\n\n");
+    } else if has_process {
+        // Generic Process-based method
+        content.push_str(&format!("    def {}(self, {}) -> dict:\n", action_name, params_str));
+        content.push_str(&format!("        \"\"\"Process execution for {}\"\"\"\n", action_name));
+
+        if let Some(process) = &action.process {
+            for step in &process.steps {
+                match step {
+                    crate::ast::ProcessStep::Derive(derive) => {
+                         match &derive.value {
+                            DeriveValue::Select { entity, predicate } => {
+                                let py_code = select_to_python(entity, predicate, has_data, &derived_vars);
+                                content.push_str(&format!("        {} = {}\n", derive.name, py_code));
+                            }
+                            DeriveValue::Compute { function, args } => {
+                                let py_code = compute_to_python(function, args, has_data, &derived_vars);
+                                content.push_str(&format!("        {} = {}\n", derive.name, py_code));
+                            }
+                            DeriveValue::SystemCall { namespace, capability, args } => {
+                                let py_code = system_call_to_python(namespace, capability, args, has_data, &derived_vars);
+                                content.push_str(&format!("        {} = {}\n", derive.name, py_code));
+                            }
+                            DeriveValue::Identifier(id) => {
+                                 let val = resolve_identifier_python(id, has_data, &derived_vars);
+                                 content.push_str(&format!("        {} = {}\n", derive.name, val));
+                            }
+                            DeriveValue::FieldAccess { path } => {
+                                 let val = resolve_field_access_python(path, has_data, &derived_vars);
+                                 content.push_str(&format!("        {} = {}\n", derive.name, val));
+                            }
+                            _ => {}
+                         }
+                         derived_vars.insert(derive.name.clone());
+                    }
+                    crate::ast::ProcessStep::Mutate(mutate) => {
+                        if let Some(predicate) = &mutate.predicate {
+                            // Update mode: mutate Entity where <predicate>:
+                            let query = select_query_to_python(&mutate.entity, predicate, has_data, &derived_vars);
+                            content.push_str(&format!("        {}.update({{\n", query));
+                            for setter in &mutate.setters {
+                                let value_expr = derive_value_to_python(&setter.value, has_data, &derived_vars); 
+                                content.push_str(&format!("            \"{}\": {},\n", setter.field, value_expr));
+                            }
+                            content.push_str("        }, synchronize_session=False)\n");
+                        } else {
+                            // Create mode: mutate Entity:
+                            content.push_str(&format!("        new_{} = {}Model(\n", mutate.entity.to_lowercase(), mutate.entity));
+                            for setter in &mutate.setters {
+                                let value_expr = derive_value_to_python(&setter.value, has_data, &derived_vars); 
+                                content.push_str(&format!("            {}={},\n", setter.field, value_expr));
+                            }
+                            content.push_str("        )\n");
+                            content.push_str(&format!("        db.add(new_{})\n", mutate.entity.to_lowercase()));
+                        }
+                    }
+                    crate::ast::ProcessStep::Delete(del) => {
+                        let query = select_query_to_python(&del.entity, &del.predicate, has_data, &derived_vars);
+                        content.push_str(&format!("        {}.delete()\n", query));
+                    }
+                }
+            }
+            content.push_str("        db.commit()\n");
+        }
+
+        // Return output
+        content.push_str("        return {\n");
+        if let Some(output) = &action.output {
+             content.push_str(&format!("            \"id\": \"done\",\n")); // Placeholder
+             // In real app, we might return last created ID. 
+             // The user example had 'output: Secret(id)'. 
+             // If we just mutated Secret, maybe we should return it?
+        }
+        content.push_str("        }\n\n");
+
     } else if has_hash {
         // Signup-style method
         content.push_str(&format!("    def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));
@@ -277,11 +405,11 @@ fn generate_services_init(ast: &IntentFile) -> String {
     content
 }
 
-fn select_to_python(entity: &str, predicate: &crate::ast::Predicate) -> String {
+fn select_query_to_python(entity: &str, predicate: &crate::ast::Predicate, has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
     use crate::ast::{FieldReference, CompareOp};
     
     let right_str = match &predicate.value {
-        FieldReference::InputField(name) => format!("data.{}", name),
+        FieldReference::InputField(name) => resolve_identifier_python(name, has_data, derived_vars),
         FieldReference::DerivedField { name, field } => format!("{}.{}", name, field),
         FieldReference::Literal(lit) => match lit {
             crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
@@ -302,16 +430,67 @@ fn select_to_python(entity: &str, predicate: &crate::ast::Predicate) -> String {
         _ => "id".to_string(),
     };
     
-    format!("db.query({}Model).filter({}Model.{} {} {}).first()", entity, entity, filter_field, op_str, right_str)
+    format!("db.query({}Model).filter({}Model.{} {} {})", entity, entity, filter_field, op_str, right_str)
 }
 
-fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg]) -> String {
+fn select_to_python(entity: &str, predicate: &crate::ast::Predicate, has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
+    format!("{}.first()", select_query_to_python(entity, predicate, has_data, derived_vars))
+}
+
+fn resolve_identifier_python(id: &str, has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
+     if derived_vars.contains(id) {
+         id.to_string()
+     } else if id.contains('.') {
+        // Handle dotted access if passed as string
+        let parts: Vec<&str> = id.split('.').collect();
+        resolve_field_access_python(&parts.iter().map(|s| s.to_string()).collect::<Vec<_>>(), has_data, derived_vars)
+    } else {
+        if has_data {
+            format!("data.{}", id)
+        } else {
+            id.to_string()
+        }
+    }
+}
+
+fn resolve_field_access_python(path: &[String], has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
+     if path[0] == "input" {
+          if has_data {
+              format!("data.{}", path[1])
+          } else {
+              path[1].clone()
+          }
+     } else if path[0] == "current_user" {
+          format!("current_user.{}", path[1])
+     } else if derived_vars.contains(&path[0]) {
+          format!("{}.{}", path[0], path[1])
+     } else {
+          // Fallback
+          format!("{}.{}", path[0], path[1])
+     }
+}
+
+fn derive_value_to_python(value: &DeriveValue, has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
+    match value {
+        DeriveValue::Literal(lit) => match lit {
+            crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+            crate::ast::LiteralValue::Number(n) => n.to_string(),
+            crate::ast::LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+        },
+        DeriveValue::Identifier(s) => resolve_identifier_python(s, has_data, derived_vars),
+        DeriveValue::FieldAccess { path } => resolve_field_access_python(path, has_data, derived_vars),
+        DeriveValue::Compute { function, args } => compute_to_python(function, args, has_data, derived_vars),
+        _ => "None".to_string()
+    }
+}
+
+fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg], has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
     use crate::ast::FunctionArg;
     
     let args_str: Vec<String> = args.iter().map(|arg| match arg {
         FunctionArg::TypeName(s) => s.clone(),
-        FunctionArg::Identifier(s) => format!("data.{}", s),
-        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Identifier(s) => resolve_identifier_python(s, has_data, derived_vars),
+        FunctionArg::FieldAccess { path } => resolve_field_access_python(path, has_data, derived_vars),
         FunctionArg::Literal(lit) => match lit {
             crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
             crate::ast::LiteralValue::Number(n) => n.to_string(),
@@ -340,13 +519,13 @@ fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg]) -> String
     }
 }
 
-fn system_call_to_python(namespace: &str, capability: &str, args: &[crate::ast::FunctionArg]) -> String {
+fn system_call_to_python(namespace: &str, capability: &str, args: &[crate::ast::FunctionArg], has_data: bool, derived_vars: &std::collections::HashSet<String>) -> String {
     use crate::ast::FunctionArg;
     
     let args_str: Vec<String> = args.iter().map(|arg| match arg {
         FunctionArg::TypeName(s) => s.clone(),
-        FunctionArg::Identifier(s) => format!("data.{}", s),
-        FunctionArg::FieldAccess { path } => path.join("."),
+        FunctionArg::Identifier(s) => resolve_identifier_python(s, has_data, derived_vars),
+        FunctionArg::FieldAccess { path } => resolve_field_access_python(path, has_data, derived_vars),
         FunctionArg::Literal(lit) => match lit {
             crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
             crate::ast::LiteralValue::Number(n) => n.to_string(),

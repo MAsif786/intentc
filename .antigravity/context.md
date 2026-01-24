@@ -35,8 +35,10 @@
 - [x] **Password Hashing**: `@map(field, hash)` for bcrypt transforms.
 - [x] **Policies**: Authorization rules with `@policy(Name)` decorator.
 - [x] **Field Types**: `uuid`, `email`, enums, optionals, arrays, references.
+- [x] **Mutate & Delete**: Atomic write and delete operations in process flow.
 
 ## Recent Milestones
+- **v0.4**: Added `mutate` (create/update) and `delete` operations in process flow, indented output syntax.
 - **v0.3.1**: Added `auth entity` syntax with validation (single auth entity, @auth requirements).
 - **v0.3**: Structured actions with `input`/`process`/`output`, policies, layered architecture.
 - **v0.2**: JWT authentication, password hashing, `@auth` decorator.

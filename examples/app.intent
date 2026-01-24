@@ -91,7 +91,8 @@ action get_product:
 action create_order:
     input:
         total: number
-    output: Order(id, status, total)
+    output: 
+        Order(id, status, total)
 
 @api GET /orders/{id}
 @auth
@@ -99,7 +100,42 @@ action create_order:
 action get_order:
     input:
         id: uuid
-    output: Order(id, total, status, created_at)
+    output: 
+        Order(id, total, status, created_at)
+
+@api POST /orders/{id}/cancel
+@auth
+@policy(Order.OwnsOrder)
+action cancel_order:
+    input:
+        id: uuid
+    process:
+        mutate Order where id == input.id:
+            set status = "cancelled"
+    output:
+        Order(id, status)
+
+# Review Actions
+@api GET /reviews
+action list_reviews:
+    output: Review(id, rating, comment)
+
+@api GET /reviews/{id}
+action get_review:
+    input:
+        id: uuid
+    output: Review(id, rating, comment)
+
+@api DELETE /reviews/{id}
+@auth
+action delete_review:
+    input:
+        id: uuid
+    process:
+        # Ideally check ownership here, e.g. review.user_id == current_user.id
+        delete Review where id == input.id
+    output:
+        Review(id)
 
 # Rules
 rule LogHighValueOrder:

@@ -85,20 +85,6 @@ fn generate_crud_methods(name: &str, _name_lower: &str) -> String {
     content.push_str("        \"\"\"Get a record by ID\"\"\"\n");
     content.push_str("        return self.repo.get_by_id(db, id)\n\n");
     
-    // Create
-    content.push_str(&format!("    def create(self, db: Session, data: dict) -> {}Model:\n", name));
-    content.push_str("        \"\"\"Create a new record\"\"\"\n");
-    content.push_str("        return self.repo.create(db, data)\n\n");
-    
-    // Update
-    content.push_str(&format!("    def update(self, db: Session, id: str, data: dict) -> Optional[{}Model]:\n", name));
-    content.push_str("        \"\"\"Update a record by ID\"\"\"\n");
-    content.push_str("        return self.repo.update(db, id, data)\n\n");
-    
-    // Delete
-    content.push_str("    def delete(self, db: Session, id: str) -> bool:\n");
-    content.push_str("        \"\"\"Delete a record by ID\"\"\"\n");
-    content.push_str("        return self.repo.delete(db, id)\n\n");
     
     content
 }

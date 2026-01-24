@@ -48,7 +48,8 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     content.push_str(&format!("from db.models import {}Model\n", name));
     content.push_str("from models import *\n");
     content.push_str(&format!("from services.{}_service import {}_service\n", name_lower, name_lower));
-    content.push_str("from core.security import get_current_user_token, get_password_hash\n\n");
+    content.push_str("from core.security import get_current_user_token, get_password_hash\n");
+    content.push_str("from logic.policies import *\n\n");
     
     // Router definition
     content.push_str(&format!("router = APIRouter(prefix=\"/{}s\", tags=[\"{}\"])\n\n\n", name_lower, name));
@@ -209,24 +210,10 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
     
     for decorator in &action.decorators {
         if let Decorator::Policy(name) = decorator {
-            let policy = if name.contains('.') {
-                let parts: Vec<&str> = name.split('.').collect();
-                let entity_name = parts[0];
-                let policy_name = parts[1];
-                
-                ast.find_entity(entity_name)
-                    .and_then(|e| e.policies.iter().find(|p| p.name == policy_name))
-            } else {
-                ast.policies.iter().find(|p| p.name == *name)
-            };
+            let policy = ast.policies.iter().find(|p| p.name == *name);
 
             if let Some(_p) = policy {
-                 let func_name = if name.contains('.') {
-                    let parts: Vec<&str> = name.split('.').collect();
-                    format!("check_{}_{}", parts[0], parts[1])
-                } else {
-                    format!("check_{}", name)
-                };
+                 let func_name = format!("check_{}", name);
 
                 let resource_arg = if target_var == "None" {
                     ""

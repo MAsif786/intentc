@@ -295,7 +295,8 @@ fn generate_action_requests(ast: &IntentFile) -> CompileResult<(String, usize)> 
         if let Some(fields) = input_fields {
             for param in fields {
                  let python_type = field_type_to_python_input(&param.param_type);
-                 content.push_str(&format!("    {}: {}\n", param.name, python_type));
+                 let default = if python_type.starts_with("Optional[") { " = None" } else { "" };
+                 content.push_str(&format!("    {}: {}{}\n", param.name, python_type, default));
             }
         }
         content.push_str("\n\n");

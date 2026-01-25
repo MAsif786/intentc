@@ -16,6 +16,7 @@ pub fn generate_orm_models(ast: &IntentFile, output_dir: &Path) -> CompileResult
     // Imports
     content.push_str("# Intent Compiler Generated SQLAlchemy Models\n");
     content.push_str("# Generated automatically - do not edit\n\n");
+    content.push_str("import uuid\n");
     content.push_str("from datetime import datetime\n");
     content.push_str("from typing import Optional\n\n");
     content.push_str("from sqlalchemy import Column, String, Float, Boolean, DateTime, Enum, ForeignKey, Integer\n");
@@ -168,6 +169,13 @@ fn format_default(value: &str, field_type: &FieldType) -> String {
         FieldType::DateTime => {
             if value == "now" {
                 "datetime.now".to_string()
+            } else {
+                format!("\"{}\"", value)
+            }
+        }
+        FieldType::Uuid => {
+            if value == "uuid" {
+                "lambda: str(uuid.uuid4())".to_string()
             } else {
                 format!("\"{}\"", value)
             }

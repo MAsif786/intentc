@@ -410,7 +410,60 @@ impl IntentFile {
     pub fn find_entity(&self, name: &str) -> Option<&Entity> {
         self.entities.iter().find(|e| e.name == name)
     }
+}
 
+impl Action {
+    /// Infer which entity this action belongs to
+    pub fn infer_entity(&self, ast: &IntentFile) -> Option<String> {
+        // 1. Explicit output entity
+        if let Some(output) = &self.output {
+            return Some(output.entity.clone());
+        }
+
+        // 2. Look for mutations/deletions in process
+        if let Some(process) = &self.process {
+            for step in &process.steps {
+                match step {
+                    ProcessStep::Mutate(m) => return Some(m.entity.clone()),
+                    ProcessStep::Delete(d) => return Some(d.entity.clone()),
+                    ProcessStep::Derive(d) => {
+                        if let DeriveValue::Select { entity, .. } = &d.value {
+                            return Some(entity.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to @api path matching
+        if let Some(Decorator::Api { path, .. }) = self.decorators.iter().find(|d| matches!(d, Decorator::Api { .. })) {
+            for entity in &ast.entities {
+                let entity_name_lower = entity.name.to_lowercase();
+                let prefix = format!("/{}s", entity_name_lower);
+                let prefix_single = format!("/{}", entity_name_lower);
+                if path.starts_with(&prefix) || path.starts_with(&prefix_single) {
+                    return Some(entity.name.clone());
+                }
+            }
+            
+            // Special case for /auth paths and auth entity
+            if path.starts_with("/auth") {
+                if let Some(auth_entity) = &ast.auth_entity {
+                    return Some(auth_entity.clone());
+                }
+            }
+        }
+
+        // 4. Heuristic by name for auth actions
+        if let Some(auth_entity) = &ast.auth_entity {
+            let auth_names = ["register", "login", "logout", "get_me", "get_my_auth", "forgot_password", "reset_password", "signup"];
+            if auth_names.contains(&self.name.as_str()) {
+                return Some(auth_entity.clone());
+            }
+        }
+
+        None
+    }
 }
 
 impl Default for IntentFile {

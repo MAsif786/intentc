@@ -112,6 +112,9 @@ app = FastAPI(
     title="Intent Compiler Generated API",
     description="API generated from Intent Definition Language",
     version="VERSION",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 # Configure CORS
@@ -129,7 +132,12 @@ app.include_router(routes.router)
 
 @app.get("/")
 async def root():
-    return {"message": "Intent Compiler Generated API", "status": "running"}
+    return {
+        "message": "Intent Compiler Generated API",
+        "status": "running",
+        "docs": "/docs",
+        "redoc": "/redoc"
+    }
 
 
 @app.get("/health")

@@ -287,6 +287,13 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                     }
                 }
             }
+            
+            // Special handling for login response
+            if action.name == "login" {
+                content.push_str("            \"access_token\": token,\n");
+                content.push_str("            \"token_type\": \"bearer\",\n");
+            }
+            
             content.push_str("        }\n\n");
         }
     } else if has_process {
@@ -440,7 +447,6 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
              }
         }
         content.push_str("        }\n\n");
-
     } else if has_hash {
         // Signup-style method
         content.push_str(&format!("    def {}(self, {}) -> {}Model:\n", action_name, params_str, entity_name));

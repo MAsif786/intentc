@@ -27,8 +27,24 @@ pub fn generate_security(ast: &IntentFile, output_dir: &Path) -> CompileResult<G
     content.push_str("from db.database import get_db\n\n");
 
     content.push_str("# Password hashing setup\n");
+    // Password hashing setup
     content.push_str("pwd_context = CryptContext(schemes=[\"bcrypt\"], deprecated=\"auto\")\n");
-    content.push_str("oauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"login\")\n\n");
+
+    // Determine tokenUrl dynamically
+    let mut token_url = "login".to_string();
+    if let Some(login_action) = ast.actions.iter().find(|a| a.name == "login") {
+        if let Some(entity) = login_action.infer_entity(ast) {
+             let prefix = format!("/{}s", entity.to_lowercase());
+             // Get action path
+             let action_path = login_action.decorators.iter().find_map(|d| {
+                 if let Decorator::Api { path, .. } = d { Some(path.clone()) } else { None }
+             }).unwrap_or_else(|| "/login".to_string());
+             
+             token_url = format!("{}{}", prefix, action_path);
+        }
+    }
+
+    content.push_str(&format!("oauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"{}\")\n\n", token_url));
 
     content.push_str("def verify_password(plain_password, hashed_password):\n");
     content.push_str("    return pwd_context.verify(plain_password, hashed_password)\n\n");

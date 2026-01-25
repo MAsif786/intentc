@@ -42,7 +42,8 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     content.push_str("# Intent Compiler Generated Controller with Routes\n");
     content.push_str("# Generated automatically - do not edit\n\n");
     content.push_str("from typing import Optional, List\n");
-    content.push_str("from fastapi import APIRouter, Depends, HTTPException, status\n");
+    content.push_str("from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm\n");
     content.push_str("from sqlalchemy.orm import Session\n\n");
     content.push_str("from db.database import get_db\n");
     content.push_str(&format!("from db.models import {}Model\n", name));
@@ -194,11 +195,24 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
         let has_input = action.input.as_ref().map(|i| !i.fields.is_empty()).unwrap_or(false);
         if has_input {
              let request_model = format!("{}Request", crate::codegen::python::models::to_pascal_case(action_name));
-             params.push(format!("data: {}", request_model));
+             
+             // Special handling for login via form data (for Swagger UI support)
+             if action_name == "login" && 
+                action.input.as_ref().map(|i| i.fields.iter().any(|f| f.name == "password") && (i.fields.iter().any(|f| f.name == "username") || i.fields.iter().any(|f| f.name == "email"))).unwrap_or(false)
+             {
+                 params.push("form_data: OAuth2PasswordRequestForm = Depends()".to_string());
+                 
+                 // Map form_data to request model
+                 let email_field = if action.input.as_ref().unwrap().fields.iter().any(|f| f.name == "email") { "email" } else { "username" };
+                 call_params.push(format!("{}({} = form_data.username, password = form_data.password)", request_model, email_field));
+             } else {
+                 params.push(format!("data: {}", request_model));
+                 call_params.push("data".to_string());
+             }
         } else {
              params.push(format!("data: {}Create", entity_name));
+             call_params.push("data".to_string());
         }
-        call_params.push("data".to_string());
     }
 
     params.push("db: Session = Depends(get_db)".to_string());

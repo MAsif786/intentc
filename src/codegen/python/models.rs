@@ -341,6 +341,13 @@ fn generate_action_requests(ast: &IntentFile) -> CompileResult<(String, usize)> 
                              content.push_str(&format!("    {}: str\n", field_name));
                         }
                     }
+                    
+                    // Special handling for login response to support OAuth2 (Swagger UI)
+                    if action.name == "login" {
+                         content.push_str("    access_token: str\n");
+                         content.push_str("    token_type: str = \"bearer\"\n");
+                    }
+
                     content.push_str("\n\n");
                 }
             }

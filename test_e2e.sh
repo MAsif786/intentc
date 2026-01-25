@@ -69,16 +69,17 @@ assert_status "200" "$CODE" "Admin registered" "$BODY"
 
 echo -e "${BLUE}[A2] Admin Login...${NC}"
 ADMIN_TOKEN=$(curl -L -s -X POST "$BASE_URL/users/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{ \"email\": \"$ADMIN_EMAIL\", \"password\": \"$ADMIN_PASS\" }" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=$ADMIN_EMAIL&password=$ADMIN_PASS" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
 if [ -n "$ADMIN_TOKEN" ]; then
   echo -e "${GREEN}  ✅ Admin Token captured${NC}"
 else
   echo -e "${RED}  ❌ Admin Login failed${NC}"
+  # Print response for debugging
   curl -L -s -X POST "$BASE_URL/users/auth/login" \
-    -H "Content-Type: application/json" \
-    -d "{ \"email\": \"$ADMIN_EMAIL\", \"password\": \"$ADMIN_PASS\" }"
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "username=$ADMIN_EMAIL&password=$ADMIN_PASS"
   exit 1
 fi
 
@@ -91,7 +92,7 @@ assert_status "200" "$CODE" "Listed users"
 DUMMY_EMAIL="dummy-$UNIQUE_ID@example.com"
 curl -L -s -X POST "$BASE_URL/users/auth/register" -H "Content-Type: application/json" -d "{ \"email\": \"$DUMMY_EMAIL\", \"password\": \"pass\", \"name\": \"Dummy\", \"role\": \"user\" }" > /dev/null
 # Login to get ID
-DUMMY_LOGIN=$(curl -L -s -X POST "$BASE_URL/users/auth/login" -H "Content-Type: application/json" -d "{ \"email\": \"$DUMMY_EMAIL\", \"password\": \"pass\" }")
+DUMMY_LOGIN=$(curl -L -s -X POST "$BASE_URL/users/auth/login" -H "Content-Type: application/x-www-form-urlencoded" -d "username=$DUMMY_EMAIL&password=pass")
 DUMMY_ID=$(echo $DUMMY_LOGIN | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
 
 if [ -n "$DUMMY_ID" ]; then
@@ -191,8 +192,8 @@ curl -L -s -X POST "$BASE_URL/users/auth/register" \
   -d "{ \"email\": \"$USER_EMAIL\", \"password\": \"$USER_PASS\", \"name\": \"Tester\" }" > /dev/null
 
 USER_LOGIN_RES=$(curl -L -s -X POST "$BASE_URL/users/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{ \"email\": \"$USER_EMAIL\", \"password\": \"$USER_PASS\" }")
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=$USER_EMAIL&password=$USER_PASS")
 USER_TOKEN=$(echo $USER_LOGIN_RES | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
 
 if [ -n "$USER_TOKEN" ]; then

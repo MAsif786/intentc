@@ -46,17 +46,26 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
     content.push_str("from sqlalchemy.orm import Session\n\n");
     content.push_str("from db.database import get_db\n");
     content.push_str(&format!("from db.models import {}Model\n", name));
+    if let Some(auth_entity) = &ast.auth_entity {
+        if auth_entity != name {
+            content.push_str(&format!("from db.models import {}Model\n", auth_entity));
+        }
+    }
     content.push_str("from models import *\n");
     content.push_str(&format!("from services.{}_service import {}_service\n", name_lower, name_lower));
-    content.push_str("from core.security import get_current_user_token, get_password_hash\n");
+    
+    let auth_import = if let Some(auth_entity) = &ast.auth_entity {
+        format!("from core.security import get_current_{}, get_password_hash\n", auth_entity.to_lowercase())
+    } else {
+        "from core.security import get_current_user_token, get_password_hash\n".to_string()
+    };
+    content.push_str(&auth_import);
+    
     content.push_str("from logic.policies import *\n\n");
     
     // Router definition
     content.push_str(&format!("router = APIRouter(prefix=\"/{}s\", tags=[\"{}\"])\n\n\n", name_lower, name));
 
-    // CRUD methods as Routes
-    content.push_str(&generate_crud_routes(name, &name_lower, ast));
-    
     // Action methods as Routes
     for action in &ast.actions {
         if let Some(output) = &action.output {
@@ -65,6 +74,9 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
             }
         }
     }
+
+    // CRUD methods as Routes
+    content.push_str(&generate_crud_routes(name, &name_lower, ast));
     
     content
 }
@@ -159,7 +171,7 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
     };
 
     // Determine if it should be a list
-    let returns_list = matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{');
+    let returns_list = matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{') && !action_name.starts_with("get_");
     if returns_list && response_model != "dict" {
         response_model = format!("List[{}]", response_model);
     }
@@ -194,7 +206,11 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
 
     let requires_auth = action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. }));
     if requires_auth {
-        params.push("current_user: dict = Depends(get_current_user_token)".to_string());
+        if let Some(auth_entity) = &ast.auth_entity {
+            params.push(format!("current_user: {}Model = Depends(get_current_{})", auth_entity, auth_entity.to_lowercase()));
+        } else {
+            params.push("current_user: dict = Depends(get_current_user_token)".to_string());
+        }
         call_params.push("current_user".to_string());
     }
 
@@ -202,8 +218,25 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
     content.push_str(&format!("    \"\"\"Handle {} action\"\"\"\n", action_name));
 
     // Policy Check
-    let policy_check = generate_policy_enforcement(action, ast, "None").unwrap_or_default();
-    content.push_str(&policy_check);
+    let has_id = path.contains("{id}");
+    let needs_resource = action.decorators.iter().any(|d| {
+        if let Decorator::Policy(name) = d {
+            name.contains('.')
+        } else { false }
+    });
+
+    if needs_resource && has_id {
+        content.push_str("    # Fetch resource for policy check\n");
+        content.push_str(&format!("    resource = {}_service.get_by_id(db, id)\n", entity_lower));
+        content.push_str("    if not resource:\n");
+        content.push_str(&format!("        raise HTTPException(status_code=404, detail=\"{} not found\")\n", entity_name));
+        
+        let policy_check = generate_policy_enforcement(action, ast, "resource").unwrap_or_default();
+        content.push_str(&policy_check);
+    } else {
+        let policy_check = generate_policy_enforcement(action, ast, "None").unwrap_or_default();
+        content.push_str(&policy_check);
+    }
 
     content.push_str(&format!("    return {0}_service.{1}({2})\n\n", entity_lower, action_name, call_params.join(", ")));
     
@@ -216,11 +249,23 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
     
     for decorator in &action.decorators {
         if let Decorator::Policy(name) = decorator {
-            let policy = ast.policies.iter().find(|p| p.name == *name);
+            let func_name = if ast.policies.iter().any(|p| p.name == *name) {
+                Some(format!("check_{}", name))
+            } else if name.contains('.') {
+                let parts: Vec<&str> = name.split('.').collect();
+                if parts.len() == 2 {
+                    let entity_name = parts[0];
+                    let policy_name = parts[1];
+                    let entity = ast.entities.iter().find(|e| e.name == entity_name);
+                    if let Some(entity) = entity {
+                        if entity.policies.iter().any(|p| p.name == policy_name) {
+                            Some(format!("check_{}_{}", entity_name, policy_name))
+                        } else { None }
+                    } else { None }
+                } else { None }
+            } else { None };
 
-            if let Some(_p) = policy {
-                 let func_name = format!("check_{}", name);
-
+            if let Some(func) = func_name {
                 let resource_arg = if target_var == "None" {
                     ""
                 } else {
@@ -228,7 +273,7 @@ fn generate_policy_enforcement(action: &Action, ast: &IntentFile, target_var: &s
                 };
 
                 content.push_str(&format!("    # Enforce policy: {}\n", name));
-                content.push_str(&format!("    {}(user=current_user{})\n", func_name, resource_arg));
+                content.push_str(&format!("    {}(user=current_user{})\n", func, resource_arg));
             }
         }
     }

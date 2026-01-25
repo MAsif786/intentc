@@ -319,7 +319,14 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                                  let val = resolve_field_access_python(path, has_data, &derived_vars);
                                  content.push_str(&format!("        {} = {}\n", derive.name, val));
                             }
-                            _ => {}
+                            DeriveValue::Literal(lit) => {
+                                 let val = match lit {
+                                     crate::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+                                     crate::ast::LiteralValue::Number(n) => n.to_string(),
+                                     crate::ast::LiteralValue::Boolean(b) => if *b { "True".to_string() } else { "False".to_string() },
+                                 };
+                                 content.push_str(&format!("        {} = {}\n", derive.name, val));
+                            }
                          }
                          derived_vars.insert(derive.name.clone());
                     }
@@ -379,12 +386,20 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         if let Some(output) = &action.output {
              if let Some(var) = target_var {
                  for field in &output.fields {
-                     content.push_str(&format!("            \"{}\": {}.{},\n", field, var, field));
+                     if derived_vars.contains(field) {
+                         content.push_str(&format!("            \"{}\": {},\n", field, field));
+                     } else {
+                         content.push_str(&format!("            \"{}\": {}.{},\n", field, var, field));
+                     }
                  }
              } else if action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. })) && output.entity == "User" {
                  // Fallback for self-updates like /profile
                  for field in &output.fields {
-                     content.push_str(&format!("            \"{}\": current_user.{},\n", field, field));
+                     if derived_vars.contains(field) {
+                         content.push_str(&format!("            \"{}\": {},\n", field, field));
+                     } else {
+                         content.push_str(&format!("            \"{}\": current_user.{},\n", field, field));
+                     }
                  }
              } else {
                  content.push_str("            \"id\": \"done\",\n");
@@ -577,6 +592,13 @@ fn compute_to_python(function: &str, args: &[crate::ast::FunctionArg], has_data:
     }).collect();
     
     match function {
+        "hash" => {
+            if !args_str.is_empty() {
+                format!("get_password_hash({})", args_str[0])
+            } else {
+                "\"\"".to_string()
+            }
+        }
         "verify_hash" => {
             if args.len() >= 2 {
                 format!("verify_password({}, {})", args_str[0], args_str[1])

@@ -7,6 +7,7 @@ mod codegen;
 mod error;
 mod parser;
 mod validator;
+mod preprocessor;
 
 use std::fs;
 use std::path::Path;
@@ -60,7 +61,10 @@ fn compile_intent(input: &Path, output: &Path, target: Option<&str>, verbose: bo
     if verbose {
         println!("  {} Parsing...", "→".blue());
     }
-    let ast = parser::parse_intent(&source)?;
+    let mut ast = parser::parse_intent(&source)?;
+    
+    // Inject default auth actions if applicable
+    preprocessor::inject_auth_actions(&mut ast);
     let parse_time = parse_start.elapsed();
 
     if verbose {
@@ -143,7 +147,10 @@ fn check_intent(input: &Path, verbose: bool) -> CompileResult<()> {
     let source = fs::read_to_string(input)?;
 
     // Parse
-    let ast = parser::parse_intent(&source)?;
+    let mut ast = parser::parse_intent(&source)?;
+    
+    // Inject default auth actions if applicable
+    preprocessor::inject_auth_actions(&mut ast);
 
     if verbose {
         println!("  {} Parsed {} entities, {} actions, {} rules", 

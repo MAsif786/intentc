@@ -164,7 +164,7 @@ fn generate_action_route(action: &Action, entity_name: &str, ast: &IntentFile) -
         if !output.fields.is_empty() {
             format!("{}{}Response", entity_name, crate::codegen::python::models::to_pascal_case(action_name))
         } else {
-            entity_name.to_string()
+            "dict".to_string()
         }
     } else {
         "dict".to_string()

@@ -192,6 +192,28 @@ fn validate_entity(entity: &Entity, ctx: &mut ValidationContext) -> CompileResul
         ));
     }
 
+    // Enforce auth entity requirements
+    if entity.is_auth {
+        if !field_names.contains(&"email".to_string()) {
+            return Err(CompileError::validation(
+                format!("Auth entity '{}' must have an 'email' field", entity.name),
+                entity.location.clone(),
+            ));
+        }
+        
+        // In Intent, we usually use password_hash or password. 
+        // We'll check for either to be flexible.
+        let has_password = field_names.contains(&"password".to_string()) || 
+                           field_names.contains(&"password_hash".to_string());
+        
+        if !has_password {
+             return Err(CompileError::validation(
+                format!("Auth entity '{}' must have a 'password' or 'password_hash' field", entity.name),
+                entity.location.clone(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -729,6 +751,8 @@ entity User:
 
 auth entity UserAuth:
     id: uuid @primary
+    email: email
+    password_hash: string
 
 entity Order:
     id: uuid @primary
@@ -755,6 +779,8 @@ action get_order:
         let source = r#"
 auth entity User:
     id: uuid @primary
+    email: email
+    password_hash: string
 
 policy AdminOnly:
     subject: @auth

@@ -26,10 +26,14 @@ assert_status() {
   local expected=$1
   local actual=$2
   local msg=$3
+  local response=$4
   if [ "$expected" == "$actual" ]; then
     echo -e "${GREEN}  ✅ [PASS] $msg (Status: $actual)${NC}"
   else
     echo -e "${RED}  ❌ [FAIL] $msg (Expected: $expected, Actual: $actual)${NC}"
+    if [ -n "$response" ]; then
+      echo -e "${RED}     Response: $response${NC}"
+    fi
   fi
 }
 
@@ -50,15 +54,18 @@ echo -e "\n${YELLOW}--- ADMIN ACTIONS ---${NC}"
 
 # A1. Admin Signup
 echo -e "${BLUE}[A1] Creating Admin User...${NC}"
-CODE=$(curl -L -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/users/signup" \
+RESPONSE=$(curl -L -s -X POST "$BASE_URL/users/signup" \
   -H "Content-Type: application/json" \
+  -w "\n%{http_code}" \
   -d "{
     \"email\": \"$ADMIN_EMAIL\",
     \"password\": \"$ADMIN_PASS\",
     \"full_name\": \"Super Admin\",
     \"role\": \"admin\"
   }")
-assert_status "200" "$CODE" "Admin signed up"
+CODE=$(echo "$RESPONSE" | tail -n1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+assert_status "200" "$CODE" "Admin signed up" "$BODY"
 
 # A2. Admin Login
 echo -e "${BLUE}[A2] Admin Login...${NC}"

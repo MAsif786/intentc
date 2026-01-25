@@ -76,7 +76,7 @@ fn generate_entity_service(entity: &crate::ast::Entity, ast: &IntentFile) -> Str
     for action in &ast.actions {
         if let Some(output) = &action.output {
             if output.entity == *name {
-                content.push_str(&generate_action_method(action, name, &name_lower));
+                content.push_str(&generate_action_method(action, name, &name_lower, ast));
             }
         }
     }
@@ -105,7 +105,7 @@ fn generate_crud_methods(name: &str, _name_lower: &str) -> String {
     content
 }
 
-fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &str) -> String {
+fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &str, ast: &IntentFile) -> String {
     let mut content = String::new();
     let action_name = &action.name;
     
@@ -193,9 +193,12 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         })
     }).unwrap_or(false);
     
+    let returns_list = matches!(method, crate::ast::HttpMethod::Get) && !path.contains('{') && !action_name.starts_with("get_");
+    
     if has_find {
-        // Login-style method
-        content.push_str(&format!("    def {}(self, {}) -> dict:\n", action_name, params_str));
+        // Find/Select-style method (e.g. Login or List by filter)
+        let return_type = if returns_list { "list[dict]" } else { "dict" };
+        content.push_str(&format!("    def {}(self, {}) -> {}:\n", action_name, params_str, return_type));
         content.push_str(&format!("        \"\"\"Business logic for {}\"\"\"\n", action_name));
         
         // Process derives in order
@@ -204,10 +207,17 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                 if let crate::ast::ProcessStep::Derive(derive) = step {
                 match &derive.value {
                     DeriveValue::Select { entity, predicate } => {
-                        let py_code = select_to_python(entity, predicate, has_data, &derived_vars);
+                        let py_code = if returns_list {
+                             format!("{}.all()", select_query_to_python(entity, predicate, has_data, &derived_vars))
+                        } else {
+                             format!("{}.first()", select_query_to_python(entity, predicate, has_data, &derived_vars))
+                        };
                         content.push_str(&format!("        {} = {}\n", derive.name, py_code));
-                        content.push_str(&format!("        if not {}:\n", derive.name));
-                        content.push_str("            raise HTTPException(status_code=400, detail=\"Not found\")\n");
+                        
+                        if !returns_list {
+                            content.push_str(&format!("        if not {}:\n", derive.name));
+                            content.push_str("            raise HTTPException(status_code=400, detail=\"Not found\")\n");
+                        }
                         derived_vars.insert(derive.name.clone());
                     }
                     DeriveValue::Compute { function, args } if function == "verify_hash" => {
@@ -223,41 +233,62 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                     _ => {}
                 }
                 }
-
             }
         }
         
         // Return output
-        content.push_str("        return {\n");
-        if let Some(output) = &action.output {
-            for field in &output.fields {
-                let is_derived = action.process.as_ref().map(|p| {
-                    p.steps.iter().any(|step| {
-                         match step {
-                             crate::ast::ProcessStep::Derive(d) => d.name == *field,
-                             _ => false
-                         }
-                    })
-                }).unwrap_or(false);
-                
-                if is_derived {
-                    content.push_str(&format!("            \"{}\": {},\n", field, field));
-                } else {
-                    // Assume it's from the found entity (first derive with select)
-                    let found_var = action.process.as_ref()
-                        .and_then(|p| p.steps.iter().find_map(|step| {
-                             if let crate::ast::ProcessStep::Derive(d) = step {
-                                 if matches!(&d.value, DeriveValue::Select { .. }) {
-                                     Some(d.name.clone())
-                                 } else { None }
-                             } else { None }
-                        }))
-                        .unwrap_or_else(|| "user".to_string());
-                    content.push_str(&format!("            \"{}\": {}.{},\n", field, found_var, field));
+        if returns_list {
+            // Find the plural variable from the select step
+            let found_var = action.process.as_ref()
+                .and_then(|p| p.steps.iter().find_map(|step| {
+                    if let crate::ast::ProcessStep::Derive(d) = step {
+                        if matches!(&d.value, DeriveValue::Select { .. }) {
+                            Some(d.name.clone())
+                        } else { None }
+                    } else { None }
+                }))
+                .unwrap_or_else(|| "results".to_string());
+
+            content.push_str(&format!("        return [\n            {{\n"));
+            if let Some(output) = &action.output {
+                for field in &output.fields {
+                    // For lists, we assume fields belong to the items in found_var
+                    content.push_str(&format!("                \"{}\": item.{},\n", field, field));
                 }
             }
+            content.push_str(&format!("            }} for item in {}\n        ]\n\n", found_var));
+        } else {
+            content.push_str("        return {\n");
+            if let Some(output) = &action.output {
+                for field in &output.fields {
+                    let is_derived = action.process.as_ref().map(|p| {
+                        p.steps.iter().any(|step| {
+                            match step {
+                                crate::ast::ProcessStep::Derive(d) => d.name == *field,
+                                _ => false
+                            }
+                        })
+                    }).unwrap_or(false);
+                    
+                    if is_derived {
+                        content.push_str(&format!("            \"{}\": {},\n", field, field));
+                    } else {
+                        // Assume it's from the found entity (first derive with select)
+                        let found_var = action.process.as_ref()
+                            .and_then(|p| p.steps.iter().find_map(|step| {
+                                if let crate::ast::ProcessStep::Derive(d) = step {
+                                    if matches!(&d.value, DeriveValue::Select { .. }) {
+                                        Some(d.name.clone())
+                                    } else { None }
+                                } else { None }
+                            }))
+                            .unwrap_or_else(|| "user".to_string());
+                        content.push_str(&format!("            \"{}\": {}.{},\n", field, found_var, field));
+                    }
+                }
+            }
+            content.push_str("        }\n\n");
         }
-        content.push_str("        }\n\n");
     } else if has_process {
         // Generic Process-based method
         content.push_str(&format!("    def {}(self, {}) -> dict:\n", action_name, params_str));
@@ -296,12 +327,14 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                         if let Some(predicate) = &mutate.predicate {
                             // Update mode: mutate Entity where <predicate>:
                             let query = select_query_to_python(&mutate.entity, predicate, has_data, &derived_vars);
-                            content.push_str(&format!("        {}.update({{\n", query));
+                            content.push_str("        update_dict = {\n");
                             for setter in &mutate.setters {
                                 let value_expr = derive_value_to_python(&setter.value, has_data, &derived_vars); 
                                 content.push_str(&format!("            \"{}\": {},\n", setter.field, value_expr));
                             }
-                            content.push_str("        }, synchronize_session=False)\n");
+                            content.push_str("        }\n");
+                            content.push_str("        update_dict = {k: v for k, v in update_dict.items() if v is not None}\n");
+                            content.push_str(&format!("        {}.update(update_dict, synchronize_session=False)\n", query));
                         } else {
                             // Create mode: mutate Entity:
                             content.push_str(&format!("        new_{} = {}Model(\n", mutate.entity.to_lowercase(), mutate.entity));
@@ -323,12 +356,39 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         }
 
         // Return output
-        content.push_str("        return {\n");
+        let mut target_var = None;
         if let Some(_output) = &action.output {
-             content.push_str(&format!("            \"id\": \"done\",\n")); // Placeholder
-             // In real app, we might return last created ID. 
-             // The user example had 'output: Secret(id)'. 
-             // If we just mutated Secret, maybe we should return it?
+             target_var = action.process.as_ref()
+                .and_then(|p| p.steps.iter().filter_map(|step| {
+                    match step {
+                        crate::ast::ProcessStep::Derive(d) => Some(d.name.clone()),
+                        crate::ast::ProcessStep::Mutate(m) => {
+                             if m.predicate.is_none() { Some(format!("new_{}", m.entity.to_lowercase())) }
+                             else { Some("resource".to_string()) }
+                        },
+                        _ => None
+                    }
+                }).last());
+
+             if target_var == Some("resource".to_string()) {
+                 content.push_str(&format!("        resource = self.repo.get_by_id(db, {})\n", if params.contains(&"id".to_string()) { "id" } else { "data.id" }));
+             }
+        }
+
+        content.push_str("        return {\n");
+        if let Some(output) = &action.output {
+             if let Some(var) = target_var {
+                 for field in &output.fields {
+                     content.push_str(&format!("            \"{}\": {}.{},\n", field, var, field));
+                 }
+             } else if action.decorators.iter().any(|d| matches!(d, Decorator::Auth { .. })) && output.entity == "User" {
+                 // Fallback for self-updates like /profile
+                 for field in &output.fields {
+                     content.push_str(&format!("            \"{}\": current_user.{},\n", field, field));
+                 }
+             } else {
+                 content.push_str("            \"id\": \"done\",\n");
+             }
         }
         content.push_str("        }\n\n");
 
@@ -368,14 +428,32 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
         content.push_str(&format!("        \"\"\"Business logic for {}\"\"\"\n", action_name));
 
         if matches!(method, crate::ast::HttpMethod::Post) {
-             content.push_str("        return self.repo.create(db, data.model_dump())\n\n");
-        } else if matches!(method, crate::ast::HttpMethod::Get) && path.contains('{') {
-             content.push_str("        result = self.repo.get_by_id(db, id)\n");
-             content.push_str("        if not result:\n");
-             content.push_str("            raise HTTPException(status_code=404, detail=\"Not found\")\n");
-             content.push_str("        return result\n\n");
-        } else {
-             content.push_str("        return self.repo.get_all(db)\n\n");
+             content.push_str("        data_dict = data.model_dump()\n");
+             
+             // Check if entity has user_id or similar and set it from current_user
+             let target_entity = ast.find_entity(entity_name);
+             if let Some(entity) = target_entity {
+                 for field in &entity.fields {
+                     if (field.name == "user_id" || field.name == "owner_id" || field.name == format!("{}_id", entity.name.to_lowercase()))
+                        && !action.input.as_ref().map(|i| i.fields.iter().any(|f| f.name == field.name)).unwrap_or(false) {
+                         content.push_str(&format!("        if \"{}\" not in data_dict and \"current_user\" in locals():\n", field.name));
+                         content.push_str(&format!("            data_dict[\"{}\"] = current_user.id\n", field.name));
+                     }
+                 }
+             }
+
+             content.push_str("        return self.repo.create(db, data_dict)\n\n");
+        } else if matches!(method, crate::ast::HttpMethod::Get) {
+             if path.contains('{') {
+                 content.push_str("        result = self.repo.get_by_id(db, id)\n");
+                 content.push_str("        if not result:\n");
+                 content.push_str("            raise HTTPException(status_code=404, detail=\"Not found\")\n");
+                 content.push_str("        return result\n\n");
+             } else if action_name.starts_with("get_") && (requires_auth || uses_current_user) {
+                 content.push_str("        return current_user\n\n");
+             } else {
+                 content.push_str("        return self.repo.get_all(db)\n\n");
+             }
         }
     }
     

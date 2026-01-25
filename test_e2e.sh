@@ -82,6 +82,32 @@ else
   exit 1
 fi
 
+# A3. Admin User Management
+echo -e "${BLUE}[A3] List Users (Admin)...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/users/" -H "Authorization: Bearer $ADMIN_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Listed users"
+
+# Create dummy user for admin manipulation
+DUMMY_EMAIL="dummy-$UNIQUE_ID@example.com"
+curl -L -s -X POST "$BASE_URL/users/auth/register" -H "Content-Type: application/json" -d "{ \"email\": \"$DUMMY_EMAIL\", \"password\": \"pass\", \"name\": \"Dummy\", \"role\": \"user\" }" > /dev/null
+# Login to get ID
+DUMMY_LOGIN=$(curl -L -s -X POST "$BASE_URL/users/auth/login" -H "Content-Type: application/json" -d "{ \"email\": \"$DUMMY_EMAIL\", \"password\": \"pass\" }")
+DUMMY_ID=$(echo $DUMMY_LOGIN | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+if [ -n "$DUMMY_ID" ]; then
+  echo -e "${BLUE}[A4] Get User (Admin)...${NC}"
+  CODE=$(curl -L -s -X GET "$BASE_URL/users/$DUMMY_ID" -H "Authorization: Bearer $ADMIN_TOKEN" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Got user details"
+
+  echo -e "${BLUE}[A5] Update User (Admin)...${NC}"
+  CODE=$(curl -L -s -X PATCH "$BASE_URL/users/$DUMMY_ID" -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{ \"id\": \"$DUMMY_ID\", \"role\": \"admin\" }" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Updated user role"
+
+  echo -e "${BLUE}[A6] Delete User (Admin)...${NC}"
+  CODE=$(curl -L -s -X DELETE "$BASE_URL/users/$DUMMY_ID" -H "Authorization: Bearer $ADMIN_TOKEN" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Deleted user"
+fi
+
 # ==============================================================================
 # CATEGORIES & PRODUCTS
 # ==============================================================================
@@ -118,6 +144,40 @@ if [ -n "$PRODUCT_ID" ]; then
 else
   echo -e "${RED}  ❌ Product creation failed: $PROD_RESPONSE${NC}"
 fi
+# 2b. List Products
+echo -e "${BLUE}[2b] List Products...${NC}"
+list_prod_res=$(curl -L -s -X GET "$BASE_URL/products/" -w "\n%{http_code}")
+CODE=$(echo "$list_prod_res" | tail -n1)
+assert_status "200" "$CODE" "Listed products"
+
+# 2c. Get Product
+echo -e "${BLUE}[2c] Get Product...${NC}"
+get_prod_res=$(curl -L -s -X GET "$BASE_URL/products/$PRODUCT_ID" -w "\n%{http_code}")
+CODE=$(echo "$get_prod_res" | tail -n1)
+assert_status "200" "$CODE" "Got product"
+
+# 2d. Update Product (Admin)
+echo -e "${BLUE}[2d] Update Product (Admin)...${NC}"
+CODE=$(curl -L -s -X PATCH "$BASE_URL/products/$PRODUCT_ID" -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{ \"id\": \"$PRODUCT_ID\", \"price\": 999.99 }" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Updated product"
+
+# 2e. List Products by Category
+echo -e "${BLUE}[2e] List Products by Category...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/products/category/$CAT_ID" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Listed products by category"
+
+# 1b. Category Extras
+echo -e "${BLUE}[1b] List Categories...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/categorys/categories" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Listed categories"
+
+echo -e "${BLUE}[1c] Get Category...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/categorys/categories/$CAT_ID" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Got category"
+
+echo -e "${BLUE}[1d] Update Category (Admin)...${NC}"
+CODE=$(curl -L -s -X PATCH "$BASE_URL/categorys/categories/$CAT_ID" -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{ \"id\": \"$CAT_ID\", \"description\": \"Updated Desc\" }" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Updated category"
 
 # ==============================================================================
 # USER HAPPY PATHS
@@ -149,6 +209,15 @@ PROFILE_RESPONSE=$(curl -L -s -X GET "$BASE_URL/users/profile" \
 CODE=$(echo "$PROFILE_RESPONSE" | tail -n1)
 BODY=$(echo "$PROFILE_RESPONSE" | sed '$d')
 assert_status "200" "$CODE" "Retrieved profile" "$BODY"
+# 4b. Update Profile
+echo -e "${BLUE}[4b] Update Profile...${NC}"
+CODE=$(curl -L -s -X PATCH "$BASE_URL/users/profile" -H "Authorization: Bearer $USER_TOKEN" -H "Content-Type: application/json" -d "{ \"name\": \"Tester Updated\" }" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Updated profile"
+
+# 4c. Get My Auth
+echo -e "${BLUE}[4c] Get My Auth...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/users/auth/me" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Retrieved auth info"
 
 # 5. Cart
 echo -e "${BLUE}[5] Add to Cart...${NC}"
@@ -161,6 +230,23 @@ if [ -n "$CART_ITEM_ID" ]; then
   echo -e "${GREEN}  ✅ Added to cart (ID: $CART_ITEM_ID)${NC}"
 else
   echo -e "${RED}  ❌ Add to cart failed: $CART_RESPONSE${NC}"
+fi
+
+# 5b. Get Cart
+echo -e "${BLUE}[5b] Get My Cart...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/cartitems/cart" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Retrieved cart"
+
+if [ -n "$CART_ITEM_ID" ]; then
+  # 5c. Update Cart Item
+  echo -e "${BLUE}[5c] Update Cart Item...${NC}"
+  CODE=$(curl -L -s -X PATCH "$BASE_URL/cartitems/cart/$CART_ITEM_ID" -H "Authorization: Bearer $USER_TOKEN" -H "Content-Type: application/json" -d "{ \"itemId\": \"$CART_ITEM_ID\", \"quantity\": 3 }" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Updated cart item"
+
+  # 5d. Remove Cart Item
+  echo -e "${BLUE}[5d] Remove Cart Item...${NC}"
+  CODE=$(curl -L -s -X DELETE "$BASE_URL/cartitems/cart/$CART_ITEM_ID" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Removed cart item"
 fi
 
 # 6. Orders
@@ -180,6 +266,23 @@ else
   echo -e "${RED}  ❌ Order creation failed: $ORDER_RESPONSE${NC}"
 fi
 
+# 6b. List Orders
+echo -e "${BLUE}[6b] List Orders...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/orders/" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Listed orders"
+
+if [ -n "$ORDER_ID" ]; then
+  # 6c. Get Order
+  echo -e "${BLUE}[6c] Get Order...${NC}"
+  CODE=$(curl -L -s -X GET "$BASE_URL/orders/$ORDER_ID" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Retrieved order"
+
+  # 6d. Update Order Status (Admin)
+  echo -e "${BLUE}[6d] Update Order Status (Admin)...${NC}"
+  CODE=$(curl -L -s -X PATCH "$BASE_URL/orders/$ORDER_ID/status" -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{ \"id\": \"$ORDER_ID\", \"status\": \"shipped\" }" -w "%{http_code}" -o /dev/null)
+  assert_status "200" "$CODE" "Updated order status"
+fi
+
 # 7. Reviews
 echo -e "${BLUE}[7] Create Review...${NC}"
 REVIEW_PATH="/reviews/products/$PRODUCT_ID/reviews"
@@ -191,6 +294,26 @@ RESPONSE=$(curl -L -s -X POST "$BASE_URL$REVIEW_PATH" \
 CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | sed '$d')
 assert_status "200" "$CODE" "Created review" "$BODY"
+
+# 8. Coupons
+echo -e "${BLUE}[8] Create Coupon (Admin)...${NC}"
+COUPON_RES=$(curl -L -s -X POST "$BASE_URL/coupons/" -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" -d "{ \"code\": \"SAVE-$UNIQUE_ID\", \"discount\": 20.0, \"expiry\": \"2025-12-31T00:00:00\" }")
+COUPON_ID=$(echo $COUPON_RES | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+
+if [ -n "$COUPON_ID" ]; then
+    echo -e "${GREEN}  ✅ Coupon created (ID: $COUPON_ID)${NC}"
+else
+    echo -e "${RED}  ❌ Coupon creation failed${NC}"
+fi
+
+echo -e "${BLUE}[8b] List Coupons (Admin)...${NC}"
+CODE=$(curl -L -s -X GET "$BASE_URL/coupons/" -H "Authorization: Bearer $ADMIN_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Listed coupons"
+
+# 9. Cleanup - Clear Cart
+echo -e "${BLUE}[9] Clear Cart...${NC}"
+CODE=$(curl -L -s -X DELETE "$BASE_URL/cartitems/cart" -H "Authorization: Bearer $USER_TOKEN" -w "%{http_code}" -o /dev/null)
+assert_status "200" "$CODE" "Cleared cart"
 
 # ==============================================================================
 # SAD PATHS

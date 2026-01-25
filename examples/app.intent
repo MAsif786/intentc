@@ -48,6 +48,7 @@ action signup:
         email: email
         password: string @map(password_hash, hash)
         full_name: string
+        role: string?
     output: User(id, email, role)
 
 @api POST /login
@@ -60,6 +61,21 @@ action login:
         derive valid = compute verify_hash(password, user.password_hash)
         derive token = system jwt.create(user.email)
     output: User(id, token)
+
+@api GET /me
+@auth
+action get_me:
+    output: User(id, email, full_name, role, created_at)
+
+@api PATCH /profile
+@auth
+action update_profile:
+    input:
+        full_name: string?
+    process:
+        mutate User where id == current_user.id:
+            set full_name = input.full_name
+    output: User(id, full_name)
 
 # Product Actions
 @api POST /products
@@ -74,8 +90,35 @@ action create_product:
         category: string?
     output: Product(id, name)
 
-@api GET /products
+@api PATCH /products/{id}
 @auth
+@policy(AdminOnly)
+action update_product:
+    input:
+        id: uuid
+        name: string?
+        description: string?
+        price: number?
+        stock: number?
+    process:
+        mutate Product where id == input.id:
+            set name = input.name
+            set description = input.description
+            set price = input.price
+            set stock = input.stock
+    output: Product(id, name, price)
+
+@api DELETE /products/{id}
+@auth
+@policy(AdminOnly)
+action delete_product:
+    input:
+        id: uuid
+    process:
+        delete Product where id == input.id
+    output: Product(id)
+
+@api GET /products
 action list_products:
     output: Product(id, name, price, category, stock)
 
@@ -93,6 +136,13 @@ action create_order:
         total: number
     output: 
         Order(id, status, total)
+
+@api GET /orders
+@auth
+action list_my_orders:
+    process:
+        derive orders = select Order where user_id == current_user.id
+    output: Order(id, total, status, created_at)
 
 @api GET /orders/{id}
 @auth
@@ -116,6 +166,22 @@ action cancel_order:
         Order(id, status)
 
 # Review Actions
+@api POST /reviews
+@auth
+action create_review:
+    input:
+        product_id: uuid
+        rating: number
+        comment: string
+    process:
+        # Implicitly setting user_id via automatic injection logic
+        mutate Review:
+            set product_id = input.product_id
+            set rating = input.rating
+            set comment = input.comment
+            set user_id = current_user.id
+    output: Review(id, rating)
+
 @api GET /reviews
 action list_reviews:
     output: Review(id, rating, comment)

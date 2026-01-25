@@ -51,8 +51,13 @@ test-python: setup
 	@echo "🧪 Running Python tests with coverage..."
 	@cd $(OUTPUT_DIR) && ../$(VENV)/bin/pytest tests/ -v --cov=.
 
+# Run root E2E tests
+test-e2e:
+	@echo "🧪 Running E2E tests via root script..."
+	@./test_e2e.sh
+
 # Run all tests
-test-all: test test-python
+test-all: test test-python test-e2e
 
 # Clean generated files
 clean:
@@ -89,6 +94,7 @@ help:
 	@echo "  dev          Compile, setup, and run in one command"
 	@echo "  test         Run Rust compiler tests"
 	@echo "  test-python  Run generated Python tests"
+	@echo "  test-e2e     Run E2E tests via root script"
 	@echo "  test-all     Run all tests"
 	@echo "  clean        Remove all generated files"
 	@echo "  clean-output Remove only Python output"

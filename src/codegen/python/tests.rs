@@ -187,7 +187,7 @@ fn generate_api_tests(ast: &IntentFile) -> CompileResult<String> {
 
     // Generate tests for each action
     for action in &ast.actions {
-        content.push_str(&generate_action_test(action)?);
+        content.push_str(&generate_action_test(action, ast)?);
         content.push_str("\n\n");
     }
 
@@ -237,7 +237,7 @@ fn generate_entity_api_tests(entity: &Entity, ast: &IntentFile) -> CompileResult
 }
 
 /// Generate test for an action
-fn generate_action_test(action: &Action) -> CompileResult<String> {
+fn generate_action_test(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
     let mut content = String::new();
 
     // Get API decorator
@@ -256,8 +256,18 @@ fn generate_action_test(action: &Action) -> CompileResult<String> {
         content.push_str(&format!("def test_{}(client):\n", action.name));
         content.push_str(&format!("    \"\"\"Test {} endpoint\"\"\"\n", action.name));
         
+        // Determine the full path by finding which entity this action belongs to
+        let entity_prefix = if let Some(output) = &action.output {
+             format!("/{}s", output.entity.to_lowercase())
+        } else {
+             String::new()
+        };
+
         // Replace path params with test values
-        let test_path = path.replace("{id}", "test-id");
+        let mut test_path = path.replace("{id}", "test-id");
+        if !test_path.starts_with(&entity_prefix) && !entity_prefix.is_empty() {
+            test_path = format!("{}{}", entity_prefix, test_path);
+        }
         
         // Build JSON body if needed
         let mut json_arg = String::new();

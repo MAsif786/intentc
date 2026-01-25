@@ -237,7 +237,7 @@ fn generate_entity_api_tests(entity: &Entity, ast: &IntentFile) -> CompileResult
 }
 
 /// Generate test for an action
-fn generate_action_test(action: &Action, _ast: &IntentFile) -> CompileResult<String> {
+fn generate_action_test(action: &Action, ast: &IntentFile) -> CompileResult<String> {
     let mut content = String::new();
 
     // Get API decorator
@@ -257,8 +257,8 @@ fn generate_action_test(action: &Action, _ast: &IntentFile) -> CompileResult<Str
         content.push_str(&format!("    \"\"\"Test {} endpoint\"\"\"\n", action.name));
         
         // Determine the full path by finding which entity this action belongs to
-        let entity_prefix = if let Some(output) = &action.output {
-             format!("/{}s", output.entity.to_lowercase())
+        let entity_prefix = if let Some(target_entity) = action.infer_entity(ast) {
+             format!("/{}s", target_entity.to_lowercase())
         } else {
              String::new()
         };

@@ -88,7 +88,7 @@ fn generate_orm_model(entity: &Entity, _ast: &IntentFile) -> CompileResult<Strin
 fn generate_column(field: &crate::ast::Field) -> CompileResult<String> {
     let is_primary = field.decorators.contains(&Decorator::Primary);
     let is_unique = field.decorators.contains(&Decorator::Unique);
-    let is_optional = field.decorators.contains(&Decorator::Optional);
+    let is_optional = field.decorators.contains(&Decorator::Optional) || matches!(field.field_type, FieldType::Optional(_));
     let is_index = field.decorators.contains(&Decorator::Index);
     
     let default = field.decorators.iter().find_map(|d| {

@@ -68,8 +68,8 @@ fn generate_entity_controller(entity: &crate::ast::Entity, ast: &IntentFile) -> 
 
     // Action methods as Routes
     for action in &ast.actions {
-        if let Some(output) = &action.output {
-            if output.entity == *name {
+        if let Some(target_entity) = action.infer_entity(ast) {
+            if target_entity == *name {
                 content.push_str(&generate_action_route(action, name, ast));
             }
         }

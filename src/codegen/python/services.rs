@@ -74,8 +74,8 @@ fn generate_entity_service(entity: &crate::ast::Entity, ast: &IntentFile) -> Str
     
     // Generate action-specific methods for this entity
     for action in &ast.actions {
-        if let Some(output) = &action.output {
-            if output.entity == *name {
+        if let Some(target_entity) = action.infer_entity(ast) {
+            if target_entity == *name {
                 content.push_str(&generate_action_method(action, name, &name_lower, ast));
             }
         }
@@ -378,7 +378,41 @@ fn generate_action_method(action: &Action, entity_name: &str, _entity_lower: &st
                 }).last());
 
              if target_var == Some("resource".to_string()) {
-                 content.push_str(&format!("        resource = self.repo.get_by_id(db, {})\n", if params.contains(&"id".to_string()) { "id" } else { "data.id" }));
+                 // Try to find the ID from the mutation predicate
+                 let mut id_expr = if params.contains(&"id".to_string()) { "id".to_string() } else { "data.id".to_string() };
+                 
+                 if let Some(process) = &action.process {
+                     for step in &process.steps {
+                         if let crate::ast::ProcessStep::Mutate(m) = step {
+                             if let Some(pred) = &m.predicate {
+                                 // simple heuristic to get id from predicate
+                                 let is_id_check = match &pred.field {
+                                     crate::ast::FieldReference::InputField(n) => n == "id",
+                                     crate::ast::FieldReference::DerivedField { field, .. } => field == "id",
+                                     _ => false
+                                 };
+                                 
+                                 if is_id_check {
+                                     match &pred.value {
+                                         crate::ast::FieldReference::InputField(name) => {
+                                             id_expr = resolve_identifier_python(name, has_data, &derived_vars);
+                                         },
+                                         crate::ast::FieldReference::DerivedField { name, field } => {
+                                             id_expr = format!("{}.{}", name, field);
+                                         },
+                                          crate::ast::FieldReference::Literal(lit) => {
+                                             match lit {
+                                                 crate::ast::LiteralValue::String(s) => id_expr = format!("\"{}\"", s),
+                                                 _ => {}
+                                             }
+                                         },
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 }
+                 content.push_str(&format!("        resource = self.repo.get_by_id(db, {})\n", id_expr));
              }
         }
 

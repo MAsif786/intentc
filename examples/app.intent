@@ -58,62 +58,6 @@ entity Coupon:
     discount: number
     expiry: datetime
 
-# Actions
-
-# 1. Auth Actions
-@api POST /auth/register
-action register:
-    input:
-        name: string
-        email: email
-        password: string
-        role: string?
-    process:
-        mutate User:
-            set name = input.name
-            set email = input.email
-            set password_hash = compute hash(input.password)
-            set role = input.role
-    output: User(id, email, name, role)
-
-@api POST /auth/login
-action login:
-    input:
-        email: email
-        password: string
-    process:
-        derive user = select User where email == input.email
-        derive valid = compute verify_hash(input.password, user.password_hash)
-        derive token = system jwt.create(user.email)
-    output: User(id, email, token)
-
-@api POST /auth/logout
-@auth
-action logout:
-    process:
-        # Just to have a process step
-        derive dummy = "logged_out"
-
-@api GET /auth/me
-@auth
-action get_my_auth:
-    output: User(id, email, name, role)
-
-@api POST /auth/forgot-password
-action forgot_password:
-    input:
-        email: email
-    process:
-        derive dummy = "sent"
-
-@api POST /auth/reset-password
-action reset_password:
-    input:
-        token: string
-        new_password: string
-    process:
-        derive dummy = "reset"
-
 # 2. Users Actions
 
 @api GET /profile

@@ -1,14 +1,23 @@
+# Ecommerce API Definition fulfilling PRD
+
+# Policies
 policy AdminOnly:
     subject: @auth
     require subject.role == "admin"
 
+# Entities
 auth entity User:
     id: uuid @primary @default(uuid)
     email: email @unique @index
     password_hash: string
+    name: string
     role: string @default("user")
-    full_name: string
     created_at: datetime @default(now)
+
+entity Category:
+    id: uuid @primary @default(uuid)
+    name: string @unique @index
+    description: string?
 
 entity Product:
     id: uuid @primary @default(uuid)
@@ -16,43 +25,161 @@ entity Product:
     description: string
     price: number @validate(min: 0)
     stock: number @validate(min: 0)
-    category: string @default("uncategorized")
-    status: string @default("active")
+    category_id: uuid @index
+    images: string?
+    created_at: datetime @default(now)
 
-    policy InStock:
-        subject: @auth
-        require Product.stock > 0
+entity CartItem:
+    id: uuid @primary @default(uuid)
+    user_id: uuid @index
+    product_id: uuid
+    quantity: number @validate(min: 1)
 
 entity Order:
     id: uuid @primary @default(uuid)
-    user_id: uuid
+    user_id: uuid @index
     total: number
     status: string @default("pending")
+    shipping_address: string
+    payment_method: string
     created_at: datetime @default(now)
-
-    policy OwnsOrder:
-        subject: @auth
-        require Order.user_id == subject.id
 
 entity Review:
     id: uuid @primary @default(uuid)
-    product_id: uuid
-    user_id: uuid
+    product_id: uuid @index
+    user_id: uuid @index
     rating: number @validate(min: 1, max: 5)
     comment: string
+    created_at: datetime @default(now)
 
-# Auth Actions
+entity Coupon:
+    id: uuid @primary @default(uuid)
+    code: string @unique @index
+    discount: number
+    expiry: datetime
+
+# Actions
+
+# 1. Auth Actions
+@api POST /auth/register
+action register:
+    input:
+        name: string
+        email: email
+        password: string
+        role: string?
+    process:
+        mutate User:
+            set name = input.name
+            set email = input.email
+            set password_hash = compute hash(input.password)
+            set role = input.role
+    output: User(id, email, name, role)
+
+@api POST /auth/login
+action login:
+    input:
+        email: email
+        password: string
+    process:
+        derive user = select User where email == input.email
+        derive valid = compute verify_hash(input.password, user.password_hash)
+        derive token = system jwt.create(user.email)
+    output: User(id, email, token)
+
+@api POST /auth/logout
+@auth
+action logout:
+    process:
+        # Just to have a process step
+        derive dummy = "logged_out"
+
+@api GET /auth/me
+@auth
+action get_my_auth:
+    output: User(id, email, name, role)
+
+@api POST /auth/forgot-password
+action forgot_password:
+    input:
+        email: email
+    process:
+        derive dummy = "sent"
+
+@api POST /auth/reset-password
+action reset_password:
+    input:
+        token: string
+        new_password: string
+    process:
+        derive dummy = "reset"
+
+# 2. Users Actions
+
+@api GET /profile
+@auth
+action get_profile:
+    output: User(id, email, name, role)
+
 @api PATCH /profile
 @auth
 action update_profile:
     input:
-        full_name: string?
+        name: string?
     process:
         mutate User where id == current_user.id:
-            set full_name = input.full_name
-    output: User(id, full_name)
+            set name = input.name
+    output: User(id, name)
 
-# Product Actions
+@api GET /users
+@auth
+@policy(AdminOnly)
+action list_users:
+    output: User(id, email, name, role)
+
+@api GET /users/{id}
+@auth
+@policy(AdminOnly)
+action get_user_by_id:
+    input:
+        id: uuid
+    output: User(id, email, name, role)
+
+@api PATCH /users/{id}
+@auth
+@policy(AdminOnly)
+action update_user:
+    input:
+        id: uuid
+        name: string?
+        role: string?
+    process:
+        mutate User where id == input.id:
+            set name = input.name
+            set role = input.role
+    output: User(id, name, role)
+
+@api DELETE /users/{id}
+@auth
+@policy(AdminOnly)
+action delete_user:
+    input:
+        id: uuid
+    process:
+        delete User where id == input.id
+    output: User(id)
+
+# 3. Products Actions
+@api GET /products
+action list_products:
+    output: Product(id, name, price, category_id, stock)
+
+@api GET /products/{id}
+action get_product:
+    input:
+        id: uuid
+    output: Product(id, name, description, price, stock, category_id, images)
+
 @api POST /products
 @auth
 @policy(AdminOnly)
@@ -62,7 +189,7 @@ action create_product:
         description: string
         price: number
         stock: number
-        category: string?
+        category_id: uuid
     output: Product(id, name)
 
 @api PATCH /products/{id}
@@ -93,55 +220,150 @@ action delete_product:
         delete Product where id == input.id
     output: Product(id)
 
-@api GET /products
-action list_products:
-    output: Product(id, name, price, category, stock)
+@api GET /products/category/{category_id}
+action list_products_by_category:
+    input:
+        category_id: uuid
+    process:
+        derive category_products = select Product where category_id == input.category_id
+    output: Product(id, name, price)
 
-@api GET /products/{id}
-action get_product:
+# 4. Categories Actions
+@api GET /categories
+action list_categories:
+    output: Category(id, name, description)
+
+@api GET /categories/{id}
+action get_category:
     input:
         id: uuid
-    output: Product(id, name, description, price, stock)
+    output: Category(id, name, description)
 
-# Order Actions
+@api POST /categories
+@auth
+@policy(AdminOnly)
+action create_category:
+    input:
+        name: string
+        description: string?
+    output: Category(id, name)
+
+@api PATCH /categories/{id}
+@auth
+@policy(AdminOnly)
+action update_category:
+    input:
+        id: uuid
+        name: string?
+        description: string?
+    process:
+        mutate Category where id == input.id:
+            set name = input.name
+            set description = input.description
+    output: Category(id, name)
+
+@api DELETE /categories/{id}
+@auth
+@policy(AdminOnly)
+action delete_category:
+    input:
+        id: uuid
+    process:
+        delete Category where id == input.id
+    output: Category(id)
+
+# 5. Cart Actions
+@api GET /cart
+@auth
+action get_my_cart:
+    process:
+        derive items = select CartItem where user_id == current_user.id
+    output: CartItem(id, product_id, quantity)
+
+@api POST /cart
+@auth
+action add_to_cart:
+    input:
+        product_id: uuid
+        quantity: number
+    process:
+        mutate CartItem:
+            set user_id = current_user.id
+            set product_id = input.product_id
+            set quantity = input.quantity
+    output: CartItem(id, product_id, quantity)
+
+@api PATCH /cart/{itemId}
+@auth
+action update_cart_item:
+    input:
+        itemId: uuid
+        quantity: number
+    process:
+        mutate CartItem where id == input.itemId:
+            set quantity = input.quantity
+    output: CartItem(id, quantity)
+
+@api DELETE /cart/{itemId}
+@auth
+action remove_from_cart:
+    input:
+        itemId: uuid
+    process:
+        delete CartItem where id == input.itemId
+    output: CartItem(id)
+
+@api DELETE /cart
+@auth
+action clear_cart:
+    process:
+        delete CartItem where user_id == current_user.id
+
+# 6. Orders Actions
 @api POST /orders
 @auth
 action create_order:
     input:
         total: number
-    output: 
-        Order(id, status, total)
+        shipping_address: string
+        payment_method: string
+    process:
+        mutate Order:
+            set user_id = current_user.id
+            set total = input.total
+            set shipping_address = input.shipping_address
+            set payment_method = input.payment_method
+            set status = "pending"
+    output: Order(id, status, total)
 
 @api GET /orders
 @auth
-action list_my_orders:
+action list_orders:
     process:
         derive orders = select Order where user_id == current_user.id
     output: Order(id, total, status, created_at)
 
 @api GET /orders/{id}
 @auth
-@policy(Order.OwnsOrder)
 action get_order:
     input:
         id: uuid
-    output: 
-        Order(id, total, status, created_at)
+    output: Order(id, total, status, created_at)
 
-@api POST /orders/{id}/cancel
+@api PATCH /orders/{id}/status
 @auth
-@policy(Order.OwnsOrder)
-action cancel_order:
+@policy(AdminOnly)
+action update_order_status:
     input:
         id: uuid
+        status: string
     process:
         mutate Order where id == input.id:
-            set status = "cancelled"
-    output:
-        Order(id, status)
+            set status = input.status
+    output: Order(id, status)
 
-# Review Actions
-@api POST /reviews
+# 7. Reviews Actions
+@api POST /products/{product_id}/reviews
 @auth
 action create_review:
     input:
@@ -149,36 +371,34 @@ action create_review:
         rating: number
         comment: string
     process:
-        # Implicitly setting user_id via automatic injection logic
         mutate Review:
+            set user_id = current_user.id
             set product_id = input.product_id
             set rating = input.rating
             set comment = input.comment
-            set user_id = current_user.id
     output: Review(id, rating)
 
-@api GET /reviews
-action list_reviews:
-    output: Review(id, rating, comment)
-
-@api GET /reviews/{id}
-action get_review:
+@api GET /products/{product_id}/reviews
+action list_product_reviews:
     input:
-        id: uuid
-    output: Review(id, rating, comment)
-
-@api DELETE /reviews/{id}
-@auth
-action delete_review:
-    input:
-        id: uuid
+        product_id: uuid
     process:
-        # Ideally check ownership here, e.g. review.user_id == current_user.id
-        delete Review where id == input.id
-    output:
-        Review(id)
+        derive reviews = select Review where product_id == input.product_id
+    output: Review(id, rating, comment)
 
-# Rules
-rule LogHighValueOrder:
-    when Order.total > 1000
-    then log("High value order created")
+# 8. Coupons Actions
+@api GET /coupons
+@auth
+@policy(AdminOnly)
+action list_coupons:
+    output: Coupon(id, code, discount, expiry)
+
+@api POST /coupons
+@auth
+@policy(AdminOnly)
+action create_coupon:
+    input:
+        code: string
+        discount: number
+        expiry: datetime
+    output: Coupon(id, code)
